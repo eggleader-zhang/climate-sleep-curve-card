@@ -40,6 +40,17 @@ function resultMeta(result) {
   const [label, tone, icon] = values[result] || [result || t("\u7B49\u5F85\u6267\u884C", "Pending"), "neutral", "mdi:clock-outline"];
   return { label, tone, icon };
 }
+function entityResultSummary(result) {
+  if (!result) return "";
+  const parts = [];
+  if (result.temperature_result) {
+    parts.push(`${t("\u6E29\u5EA6", "Temp")}: ${resultMeta(result.temperature_result).label}`);
+  }
+  if (result.fan_result && result.fan_result !== "not_requested") {
+    parts.push(`${t("\u98CE\u901F", "Fan")}: ${resultMeta(result.fan_result).label}`);
+  }
+  return parts.join(" \xB7 ");
+}
 function ensureAuxDialog(host) {
   let dialog = host.shadowRoot.querySelector("#aux-dialog");
   if (!dialog) {
@@ -217,6 +228,13 @@ var ClimateSleepCurveCard = class extends HTMLElement {
     };
     return labels[String(mode).toLowerCase()] || mode;
   }
+  fanModeChoices(currentMode, commonModes = this.commonFanModes()) {
+    const choices = commonModes.map((mode) => ({ mode, unsupported: false }));
+    if (currentMode && !commonModes.includes(currentMode)) {
+      choices.unshift({ mode: currentMode, unsupported: true });
+    }
+    return choices;
+  }
   entityResult(session, entityId) {
     return session?.last_entity_results?.find((item) => item.entity_id === entityId);
   }
@@ -281,8 +299,8 @@ var ClimateSleepCurveCard = class extends HTMLElement {
     this.shadowRoot.innerHTML = `${style}<ha-card>
       <div class="row between"><div><div class="title">${esc(this.config.name || this.controller.name)}</div><div class="muted">${esc(session?.profile_snapshot?.name || profile?.name || t("\u66F2\u7EBF\u4E0D\u5B58\u5728", "Missing profile"))}</div></div><ha-icon icon="mdi:sleep"></ha-icon></div>
       ${this.config.show_climate_state ? `<div class="entity-list">${entityIds.map((entityId) => {
-      const climate = this._hass.states[entityId], result = this.entityResult(session, entityId), meta = resultMeta(result?.result);
-      return `<div class="entity-state"><div class="entity-main">${esc(climate?.attributes?.friendly_name || entityId)} \xB7 ${esc(climate?.state || "unknown")}${climate?.attributes?.temperature != null ? ` \xB7 ${esc(climate.attributes.temperature)}\xB0` : ""}${climate?.attributes?.fan_mode ? ` \xB7 ${t("\u98CE\u901F", "Fan")} ${esc(this.fanModeLabel(climate.attributes.fan_mode))}` : ""}<div class="muted">${esc(entityId)}</div></div>${result ? `<span class="result ${meta.tone}" title="${esc(result.error || "")}"><ha-icon icon="${meta.icon}"></ha-icon>${esc(meta.label)}</span>` : ""}</div>`;
+      const climate = this._hass.states[entityId], result = this.entityResult(session, entityId), meta = resultMeta(result?.result), detail = entityResultSummary(result), title = [detail, result?.error].filter(Boolean).join("\n");
+      return `<div class="entity-state"><div class="entity-main">${esc(climate?.attributes?.friendly_name || entityId)} \xB7 ${esc(climate?.state || "unknown")}${climate?.attributes?.temperature != null ? ` \xB7 ${esc(climate.attributes.temperature)}\xB0` : ""}${climate?.attributes?.fan_mode ? ` \xB7 ${t("\u98CE\u901F", "Fan")} ${esc(this.fanModeLabel(climate.attributes.fan_mode))}` : ""}<div class="muted">${esc(entityId)}${detail ? `<br>${esc(detail)}` : ""}</div></div>${result ? `<span class="result ${meta.tone}" title="${esc(title)}"><ha-icon icon="${meta.icon}"></ha-icon>${esc(meta.label)}</span>` : ""}</div>`;
     }).join("")}</div>` : ""}
       <div class="progress"><i style="width:${progress}%"></i></div>
       <div class="row between"><span>${session ? t("\u8FD0\u884C\u4E2D", "Running") : t("\u672A\u8FD0\u884C", "Idle")}</span>${this.config.show_next_point && session ? `<span class="muted">${t("\u4E0B\u4E00\u8282\u70B9", "Next")}: ${next ? `${nextTime} \xB7 ${next.temperature}\xB0C${session.profile_snapshot?.fan_mode_control === "auto" ? ` \xB7 ${t("\u81EA\u52A8\u98CE", "Auto fan")}` : session.profile_snapshot?.fan_mode_control === "curve" && next.fan_mode ? ` \xB7 ${t("\u98CE\u901F", "Fan")} ${esc(this.fanModeLabel(next.fan_mode))}` : ""}` : t("\u7B49\u5F85\u7ED3\u675F", "finishing")}</span>` : ""}</div>
@@ -449,12 +467,11 @@ var ClimateSleepCurveCard = class extends HTMLElement {
   renderProfileDialog() {
     const draft = this.draft, hours = draft.duration_minutes / 60;
     const commonFanModes = this.commonFanModes();
-    const savedFanModes = draft.points.map((point) => point.fan_mode).filter(Boolean);
-    const selectableFanModes = [.../* @__PURE__ */ new Set([...commonFanModes, ...savedFanModes])];
     const fanControl = draft.fan_mode_control || "none";
     const defaultFanMode = commonFanModes.includes("auto") ? "auto" : commonFanModes[0];
-    const fanCurve = fanControl === "curve" ? `<div class="fan-curve">${draft.points.map((point, index) => `<div class="fan-point"><label>${index}h</label><select data-fan-index="${index}">${selectableFanModes.map((mode) => `<option value="${esc(mode)}" ${mode === point.fan_mode ? "selected" : ""}>${esc(this.fanModeLabel(mode))}</option>`).join("")}</select></div>`).join("")}</div>` : "";
-    const fanHint = commonFanModes.length ? t("\u98CE\u901F\u540D\u79F0\u6765\u81EA\u5F53\u524D\u63A7\u5236\u5668\u6240\u9009\u7A7A\u8C03\u5171\u540C\u652F\u6301\u7684\u6A21\u5F0F\u3002", "Fan modes are shared by every climate entity in the current controller.") : t("\u5F53\u524D\u6240\u9009\u7A7A\u8C03\u6CA1\u6709\u5171\u540C\u7684\u98CE\u901F\u6A21\u5F0F\uFF0C\u53EA\u80FD\u9009\u62E9\u4E0D\u63A7\u5236\u98CE\u901F\u3002", "The selected climate entities have no common fan mode, so fan control is unavailable.");
+    const fanCurve = fanControl === "curve" ? `<div class="fan-curve">${draft.points.map((point, index) => `<div class="fan-point"><label>${index}h</label><select data-fan-index="${index}">${this.fanModeChoices(point.fan_mode, commonFanModes).map(({ mode, unsupported }) => `<option value="${esc(mode)}" ${mode === point.fan_mode ? "selected" : ""} ${unsupported ? "disabled" : ""}>${esc(this.fanModeLabel(mode))}${unsupported ? ` \xB7 ${t("\u5F53\u524D\u63A7\u5236\u5668\u4E0D\u652F\u6301", "unsupported here")}` : ""}</option>`).join("")}</select></div>`).join("")}</div>` : "";
+    const incompatibleFanMode = fanControl === "auto" ? !commonFanModes.includes("auto") : fanControl === "curve" && draft.points.some((point) => !commonFanModes.includes(point.fan_mode));
+    const fanHint = incompatibleFanMode ? t("\u8FD9\u6761\u5171\u4EAB\u66F2\u7EBF\u5305\u542B\u5F53\u524D\u63A7\u5236\u5668\u5E76\u975E\u5168\u90E8\u7A7A\u8C03\u90FD\u652F\u6301\u7684\u98CE\u901F\uFF1B\u8FD0\u884C\u65F6\u4F1A\u5B89\u5168\u8DF3\u8FC7\u4E0D\u652F\u6301\u7684\u8BBE\u5907\u3002\u8BF7\u9009\u62E9\u5171\u540C\u6A21\u5F0F\u5373\u53EF\u66FF\u6362\u65E7\u503C\u3002", "This shared profile contains fan modes not supported by every climate entity in this controller. Unsupported devices are safely skipped at runtime; choose a shared mode to replace an old value.") : commonFanModes.length ? t("\u98CE\u901F\u540D\u79F0\u6765\u81EA\u5F53\u524D\u63A7\u5236\u5668\u6240\u9009\u7A7A\u8C03\u5171\u540C\u652F\u6301\u7684\u6A21\u5F0F\u3002", "Fan modes are shared by every climate entity in the current controller.") : t("\u5F53\u524D\u6240\u9009\u7A7A\u8C03\u6CA1\u6709\u5171\u540C\u7684\u98CE\u901F\u6A21\u5F0F\uFF0C\u53EA\u80FD\u9009\u62E9\u4E0D\u63A7\u5236\u98CE\u901F\u3002", "The selected climate entities have no common fan mode, so fan control is unavailable.");
     this.dialog.innerHTML = `<div class="editor"><div class="row between"><div class="title">${t("\u7F16\u8F91\u7761\u7720\u66F2\u7EBF", "Edit sleep curve")}</div><button class="secondary" id="close">${t("\u8FD4\u56DE", "Back")}</button></div><label>${t("\u540D\u79F0", "Name")}</label><input class="field" id="name" maxlength="64" value="${esc(draft.name)}"><label>${t("\u65F6\u957F", "Duration")}: <b>${hours}h</b></label><input id="duration" type="range" min="4" max="12" step="1" value="${hours}" style="width:100%"><div class="row between"><label>${t("\u6E29\u5EA6\u66F2\u7EBF", "Temperature curve")}</label><button class="secondary" id="recommend">${t("\u63A8\u8350\u66F2\u7EBF", "Recommend")}</button></div>${this.chart(draft.points)}<p class="muted">${t("\u62D6\u52A8\u8282\u70B9\u6216\u4F7F\u7528\u65B9\u5411\u952E\u8C03\u6574\u3002\u540E\u53F0\u53EA\u5728\u79BB\u6563\u8282\u70B9\u6267\u884C\u3002", "Drag a point or use arrow keys. The backend acts only at discrete points.")}</p><label>${t("\u98CE\u901F\u63A7\u5236", "Fan control")}</label><select id="fan-control"><option value="none" ${fanControl === "none" ? "selected" : ""}>${t("\u4E0D\u63A7\u5236\u98CE\u901F", "Do not control fan")}</option><option value="auto" ${fanControl === "auto" ? "selected" : ""} ${!commonFanModes.includes("auto") && fanControl !== "auto" ? "disabled" : ""}>${t("\u5168\u7A0B\u81EA\u52A8\u98CE", "Automatic fan throughout")}</option><option value="curve" ${fanControl === "curve" ? "selected" : ""} ${!commonFanModes.length && fanControl !== "curve" ? "disabled" : ""}>${t("\u98CE\u91CF\u66F2\u7EBF", "Fan curve")}</option></select><p class="muted">${fanHint}</p>${fanCurve}<div class="actions"><button id="save">${t("\u4FDD\u5B58", "Save")}</button><button class="secondary" id="duplicate">${t("\u590D\u5236", "Duplicate")}</button><button class="secondary" id="cancel">${t("\u53D6\u6D88", "Cancel")}</button><button class="danger" id="delete">${t("\u5220\u9664", "Delete")}</button></div></div>`;
     this.bindChart();
     const closeEditor = async () => {

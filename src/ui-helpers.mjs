@@ -24,6 +24,18 @@ export function resultMeta(result) {
   return {label, tone, icon};
 }
 
+export function entityResultSummary(result) {
+  if (!result) return "";
+  const parts = [];
+  if (result.temperature_result) {
+    parts.push(`${t("温度", "Temp")}: ${resultMeta(result.temperature_result).label}`);
+  }
+  if (result.fan_result && result.fan_result !== "not_requested") {
+    parts.push(`${t("风速", "Fan")}: ${resultMeta(result.fan_result).label}`);
+  }
+  return parts.join(" · ");
+}
+
 function ensureAuxDialog(host) {
   let dialog = host.shadowRoot.querySelector("#aux-dialog");
   if (!dialog) {

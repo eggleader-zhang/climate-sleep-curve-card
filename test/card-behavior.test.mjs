@@ -12,7 +12,7 @@ Object.defineProperty(globalThis, "navigator", {value: {language: "en"}, configu
 globalThis.window = {customCards: []};
 
 await import("../src/card.mjs");
-const {resultMeta} = await import("../src/ui-helpers.mjs");
+const {entityResultSummary, resultMeta} = await import("../src/ui-helpers.mjs");
 const Card = customElements.get("climate-sleep-curve-card");
 
 test("disconnect releases the subscription for a later reconnect", () => {
@@ -63,6 +63,10 @@ test("per-entity execution outcomes have readable presentation metadata", () => 
   assert.equal(resultMeta("partial_failure").tone, "error");
   assert.equal(resultMeta("skipped_off").tone, "warning");
   assert.equal(resultMeta("skipped_unsupported").tone, "warning");
+  assert.equal(entityResultSummary({
+    temperature_result: "applied",
+    fan_result: "failed",
+  }), "Temp: Applied · Fan: Failed");
 });
 
 test("fan curve only offers modes shared by every selected climate entity", () => {
@@ -80,6 +84,15 @@ test("fan curve only offers modes shared by every selected climate entity", () =
   }};
 
   assert.deepEqual(card.commonFanModes(), ["auto", "low"]);
+  assert.deepEqual(card.fanModeChoices("high"), [
+    {mode: "high", unsupported: true},
+    {mode: "auto", unsupported: false},
+    {mode: "low", unsupported: false},
+  ]);
+  assert.deepEqual(card.fanModeChoices("auto"), [
+    {mode: "auto", unsupported: false},
+    {mode: "low", unsupported: false},
+  ]);
 });
 
 test("source uses non-blocking in-card dialogs instead of browser dialogs", async () => {

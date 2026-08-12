@@ -1,5 +1,5 @@
 import {clamp, resizePoints, snap} from "./curve-utils.mjs";
-import {askConfirmation, askText, errorMessage, esc, resultMeta, showMessage, t} from "./ui-helpers.mjs";
+import {askConfirmation, askText, entityResultSummary, errorMessage, esc, resultMeta, showMessage, t} from "./ui-helpers.mjs";
 
 class ClimateSleepCurveCard extends HTMLElement {
   static getConfigElement() { return document.createElement("climate-sleep-curve-card-editor"); }
@@ -93,6 +93,14 @@ class ClimateSleepCurveCard extends HTMLElement {
     return labels[String(mode).toLowerCase()] || mode;
   }
 
+  fanModeChoices(currentMode, commonModes = this.commonFanModes()) {
+    const choices = commonModes.map((mode) => ({mode, unsupported: false}));
+    if (currentMode && !commonModes.includes(currentMode)) {
+      choices.unshift({mode: currentMode, unsupported: true});
+    }
+    return choices;
+  }
+
   entityResult(session, entityId) {
     return session?.last_entity_results?.find((item) => item.entity_id === entityId);
   }
@@ -148,7 +156,7 @@ class ClimateSleepCurveCard extends HTMLElement {
     }
     this.shadowRoot.innerHTML = `${style}<ha-card>
       <div class="row between"><div><div class="title">${esc(this.config.name || this.controller.name)}</div><div class="muted">${esc(session?.profile_snapshot?.name || profile?.name || t("曲线不存在", "Missing profile"))}</div></div><ha-icon icon="mdi:sleep"></ha-icon></div>
-      ${this.config.show_climate_state ? `<div class="entity-list">${entityIds.map((entityId) => { const climate=this._hass.states[entityId],result=this.entityResult(session,entityId),meta=resultMeta(result?.result); return `<div class="entity-state"><div class="entity-main">${esc(climate?.attributes?.friendly_name || entityId)} · ${esc(climate?.state || "unknown")}${climate?.attributes?.temperature != null ? ` · ${esc(climate.attributes.temperature)}°` : ""}${climate?.attributes?.fan_mode ? ` · ${t("风速", "Fan")} ${esc(this.fanModeLabel(climate.attributes.fan_mode))}` : ""}<div class="muted">${esc(entityId)}</div></div>${result ? `<span class="result ${meta.tone}" title="${esc(result.error || "")}"><ha-icon icon="${meta.icon}"></ha-icon>${esc(meta.label)}</span>` : ""}</div>`; }).join("")}</div>` : ""}
+      ${this.config.show_climate_state ? `<div class="entity-list">${entityIds.map((entityId) => { const climate=this._hass.states[entityId],result=this.entityResult(session,entityId),meta=resultMeta(result?.result),detail=entityResultSummary(result),title=[detail,result?.error].filter(Boolean).join("\n"); return `<div class="entity-state"><div class="entity-main">${esc(climate?.attributes?.friendly_name || entityId)} · ${esc(climate?.state || "unknown")}${climate?.attributes?.temperature != null ? ` · ${esc(climate.attributes.temperature)}°` : ""}${climate?.attributes?.fan_mode ? ` · ${t("风速", "Fan")} ${esc(this.fanModeLabel(climate.attributes.fan_mode))}` : ""}<div class="muted">${esc(entityId)}${detail ? `<br>${esc(detail)}` : ""}</div></div>${result ? `<span class="result ${meta.tone}" title="${esc(title)}"><ha-icon icon="${meta.icon}"></ha-icon>${esc(meta.label)}</span>` : ""}</div>`; }).join("")}</div>` : ""}
       <div class="progress"><i style="width:${progress}%"></i></div>
       <div class="row between"><span>${session ? t("运行中", "Running") : t("未运行", "Idle")}</span>${this.config.show_next_point && session ? `<span class="muted">${t("下一节点", "Next")}: ${next ? `${nextTime} · ${next.temperature}°C${session.profile_snapshot?.fan_mode_control === "auto" ? ` · ${t("自动风", "Auto fan")}` : session.profile_snapshot?.fan_mode_control === "curve" && next.fan_mode ? ` · ${t("风速", "Fan")} ${esc(this.fanModeLabel(next.fan_mode))}` : ""}` : t("等待结束", "finishing")}</span>` : ""}</div>
       <div class="actions">${session ? `<button class="danger" id="stop">${t("停止", "Stop")}</button><button class="secondary" id="restart">${t("重新开始", "Restart")}</button>` : `<button id="start">${t("启动曲线", "Start curve")}</button>`}<button class="secondary" id="profiles">${t("曲线管理", "Profiles")}</button><button class="secondary" id="settings">${t("控制器", "Controller")}</button></div>
@@ -290,12 +298,15 @@ class ClimateSleepCurveCard extends HTMLElement {
   renderProfileDialog() {
     const draft = this.draft, hours = draft.duration_minutes / 60;
     const commonFanModes = this.commonFanModes();
-    const savedFanModes = draft.points.map((point) => point.fan_mode).filter(Boolean);
-    const selectableFanModes = [...new Set([...commonFanModes, ...savedFanModes])];
     const fanControl = draft.fan_mode_control || "none";
     const defaultFanMode = commonFanModes.includes("auto") ? "auto" : commonFanModes[0];
-    const fanCurve = fanControl === "curve" ? `<div class="fan-curve">${draft.points.map((point,index)=>`<div class="fan-point"><label>${index}h</label><select data-fan-index="${index}">${selectableFanModes.map((mode)=>`<option value="${esc(mode)}" ${mode===point.fan_mode?"selected":""}>${esc(this.fanModeLabel(mode))}</option>`).join("")}</select></div>`).join("")}</div>` : "";
-    const fanHint = commonFanModes.length
+    const fanCurve = fanControl === "curve" ? `<div class="fan-curve">${draft.points.map((point,index)=>`<div class="fan-point"><label>${index}h</label><select data-fan-index="${index}">${this.fanModeChoices(point.fan_mode, commonFanModes).map(({mode,unsupported})=>`<option value="${esc(mode)}" ${mode===point.fan_mode?"selected":""} ${unsupported?"disabled":""}>${esc(this.fanModeLabel(mode))}${unsupported?` · ${t("当前控制器不支持", "unsupported here")}`:""}</option>`).join("")}</select></div>`).join("")}</div>` : "";
+    const incompatibleFanMode = fanControl === "auto"
+      ? !commonFanModes.includes("auto")
+      : fanControl === "curve" && draft.points.some((point) => !commonFanModes.includes(point.fan_mode));
+    const fanHint = incompatibleFanMode
+      ? t("这条共享曲线包含当前控制器并非全部空调都支持的风速；运行时会安全跳过不支持的设备。请选择共同模式即可替换旧值。", "This shared profile contains fan modes not supported by every climate entity in this controller. Unsupported devices are safely skipped at runtime; choose a shared mode to replace an old value.")
+      : commonFanModes.length
       ? t("风速名称来自当前控制器所选空调共同支持的模式。", "Fan modes are shared by every climate entity in the current controller.")
       : t("当前所选空调没有共同的风速模式，只能选择不控制风速。", "The selected climate entities have no common fan mode, so fan control is unavailable.");
     this.dialog.innerHTML = `<div class="editor"><div class="row between"><div class="title">${t("编辑睡眠曲线", "Edit sleep curve")}</div><button class="secondary" id="close">${t("返回", "Back")}</button></div><label>${t("名称", "Name")}</label><input class="field" id="name" maxlength="64" value="${esc(draft.name)}"><label>${t("时长", "Duration")}: <b>${hours}h</b></label><input id="duration" type="range" min="4" max="12" step="1" value="${hours}" style="width:100%"><div class="row between"><label>${t("温度曲线", "Temperature curve")}</label><button class="secondary" id="recommend">${t("推荐曲线", "Recommend")}</button></div>${this.chart(draft.points)}<p class="muted">${t("拖动节点或使用方向键调整。后台只在离散节点执行。", "Drag a point or use arrow keys. The backend acts only at discrete points.")}</p><label>${t("风速控制", "Fan control")}</label><select id="fan-control"><option value="none" ${fanControl==="none"?"selected":""}>${t("不控制风速", "Do not control fan")}</option><option value="auto" ${fanControl==="auto"?"selected":""} ${!commonFanModes.includes("auto")&&fanControl!=="auto"?"disabled":""}>${t("全程自动风", "Automatic fan throughout")}</option><option value="curve" ${fanControl==="curve"?"selected":""} ${!commonFanModes.length&&fanControl!=="curve"?"disabled":""}>${t("风量曲线", "Fan curve")}</option></select><p class="muted">${fanHint}</p>${fanCurve}<div class="actions"><button id="save">${t("保存", "Save")}</button><button class="secondary" id="duplicate">${t("复制", "Duplicate")}</button><button class="secondary" id="cancel">${t("取消", "Cancel")}</button><button class="danger" id="delete">${t("删除", "Delete")}</button></div></div>`;
