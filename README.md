@@ -1,8 +1,13 @@
 # Climate Sleep Curve Card / 空调睡眠曲线卡片
 
-Climate Sleep Curve Card 是 [Climate Sleep Curve](http://172.20.0.3:3000/eggleader/climate-sleep-curve) 的 Home Assistant Dashboard Plugin。它提供适合桌面和移动端的睡眠温度曲线编辑器、控制器配置、会话操作和运行进度展示。
+[![GitHub release](https://img.shields.io/github/v/release/eggleader-zhang/climate-sleep-curve-card)](https://github.com/eggleader-zhang/climate-sleep-curve-card/releases)
+[![HACS validation](https://github.com/eggleader-zhang/climate-sleep-curve-card/actions/workflows/validate.yml/badge.svg)](https://github.com/eggleader-zhang/climate-sleep-curve-card/actions/workflows/validate.yml)
+
+Climate Sleep Curve Card 是 [Climate Sleep Curve](https://github.com/eggleader-zhang/climate-sleep-curve) 的 Home Assistant Dashboard Plugin。它提供适合桌面和移动端的睡眠温度曲线编辑器、控制器配置、会话操作和运行进度展示。
 
 卡片不直接调用空调服务。它通过 Home Assistant 已认证 WebSocket 连接与后端集成通信，实际调温和安全检查全部由后端完成。
+
+![Climate Sleep Curve Card 界面预览](docs/images/card-preview.svg)
 
 ## 主要功能
 
@@ -36,13 +41,15 @@ Climate Sleep Curve Card 是 [Climate Sleep Curve](http://172.20.0.3:3000/egglea
 
 ### 使用 HACS 自定义仓库
 
+[![在 HACS 中打开此仓库](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=eggleader-zhang&repository=climate-sleep-curve-card&category=plugin)
+
 1. 打开 HACS。
 2. 进入右上角菜单中的“自定义仓库”。
-3. 添加本仓库地址，类别选择 **Dashboard**。
+3. 添加 `https://github.com/eggleader-zhang/climate-sleep-curve-card`，类别选择 **Dashboard**。
 4. 搜索并下载 **Climate Sleep Curve Card**。
 5. 刷新浏览器；如果仍显示旧版本，请清除前端缓存或重启 Home Assistant 前端。
 
-私有 Gitea 是否能直接作为 HACS 来源，取决于 HACS 版本和网络环境。无法识别时请使用手动安装；公开发布时建议镜像到 GitHub。
+HACS 使用公开 GitHub 仓库作为下载源。Gitea 仅作为项目镜像，不应填写到 HACS 自定义仓库中。
 
 ### 手动安装
 
