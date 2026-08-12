@@ -75,6 +75,10 @@ class ClimateSleepCurveCard extends HTMLElement {
 
   entityIds(item) { return item?.climate_entity_ids || (item?.climate_entity_id ? [item.climate_entity_id] : []); }
 
+  supportsCompletionPowerOff() {
+    return this.state?.capabilities?.turn_off_after_completion === true;
+  }
+
   commonFanModes() {
     const lists = this.entityIds(this.controller)
       .map((entityId) => this._hass.states[entityId]?.attributes?.fan_modes)
@@ -205,9 +209,19 @@ class ClimateSleepCurveCard extends HTMLElement {
   openController(controller) {
     const profiles = this.state.profiles;
     const auto = controller.automatic_start;
-    const supportsCompletionPowerOff = this.state?.capabilities?.turn_off_after_completion === true;
+    const supportsCompletionPowerOff = this.supportsCompletionPowerOff();
+    const powerOffDisabled = supportsCompletionPowerOff ? "" : "disabled";
+    const powerOffHelp = supportsCompletionPowerOff
+      ? t(
+        "仅正常运行到曲线结束时生效；手动停止、重新开始、删除控制器或 Home Assistant 重启恢复都不会关闭空调。所选空调必须支持关机服务。",
+        "Only applies when the curve reaches its natural end. Manual stop, restart, controller deletion, and Home Assistant recovery never turn devices off. Every selected climate entity must support turn off.",
+      )
+      : t(
+        "请先将 Climate Sleep Curve 后端更新到 0.5.0 或更高版本。",
+        "Update the Climate Sleep Curve backend to version 0.5.0 or later first.",
+      );
     const weekdayLabels = [t("周一","Mon"),t("周二","Tue"),t("周三","Wed"),t("周四","Thu"),t("周五","Fri"),t("周六","Sat"),t("周日","Sun")];
-    this.dialog.innerHTML = `<div class="editor"><div class="title">${t("控制器设置", "Controller settings")}</div><label>${t("名称", "Name")}</label><input class="field" id="name" value="${esc(controller.name)}"><label>${t("空调实体（可多选）", "Climate entities (multiple allowed)")}</label><ha-selector id="entities"></ha-selector><label>${t("下次会话使用的曲线", "Profile for the next session")}</label><select id="profile">${profiles.map((profile)=>`<option ${profile.id===controller.profile_id?"selected":""} value="${profile.id}">${esc(profile.name)}</option>`).join("")}</select><div class="setting-row"><ha-switch id="automatic"></ha-switch><label for="automatic">${t("每天自动启动", "Start automatically")}</label></div><label>${t("启动时间", "Start time")}</label><ha-selector id="time"></ha-selector><label>${t("生效日期", "Active weekdays")}</label><div class="weekdays">${weekdayLabels.map((label,index)=>`<label class="weekday"><ha-checkbox data-day="${index}"></ha-checkbox><span>${label}</span></label>`).join("")}</div><div class="setting-row"><ha-switch id="turn-off-after-completion" ${supportsCompletionPowerOff?"":"disabled"}></ha-switch><label for="turn-off-after-completion">${t("曲线自然结束后关闭空调", "Turn off climate devices after natural completion")}</label></div><p class="muted">${supportsCompletionPowerOff?t("仅正常运行到曲线结束时生效；手动停止、重新开始、删除控制器或 Home Assistant 重启恢复都不会关闭空调。所选空调必须支持关机服务。", "Only applies when the curve reaches its natural end. Manual stop, restart, controller deletion, and Home Assistant recovery never turn devices off. Every selected climate entity must support turn off."):t("请先将 Climate Sleep Curve 后端更新到 0.5.0 或更高版本。", "Update the Climate Sleep Curve backend to version 0.5.0 or later first.")}</p><div class="actions"><button id="save">${t("保存", "Save")}</button><button class="secondary" id="cancel">${t("取消", "Cancel")}</button><button class="danger" id="delete">${t("删除控制器", "Delete controller")}</button></div></div>`;
+    this.dialog.innerHTML = `<div class="editor"><div class="title">${t("控制器设置", "Controller settings")}</div><label>${t("名称", "Name")}</label><input class="field" id="name" value="${esc(controller.name)}"><label>${t("空调实体（可多选）", "Climate entities (multiple allowed)")}</label><ha-selector id="entities"></ha-selector><label>${t("下次会话使用的曲线", "Profile for the next session")}</label><select id="profile">${profiles.map((profile)=>`<option ${profile.id===controller.profile_id?"selected":""} value="${profile.id}">${esc(profile.name)}</option>`).join("")}</select><div class="setting-row"><ha-switch id="automatic"></ha-switch><label for="automatic">${t("每天自动启动", "Start automatically")}</label></div><label>${t("启动时间", "Start time")}</label><ha-selector id="time"></ha-selector><label>${t("生效日期", "Active weekdays")}</label><div class="weekdays">${weekdayLabels.map((label,index)=>`<label class="weekday"><ha-checkbox data-day="${index}"></ha-checkbox><span>${label}</span></label>`).join("")}</div><div class="setting-row"><ha-switch id="turn-off-after-completion" ${powerOffDisabled}></ha-switch><label for="turn-off-after-completion">${t("曲线自然结束后关闭空调", "Turn off climate devices after natural completion")}</label></div><p class="muted">${powerOffHelp}</p><div class="actions"><button id="save">${t("保存", "Save")}</button><button class="secondary" id="cancel">${t("取消", "Cancel")}</button><button class="danger" id="delete">${t("删除控制器", "Delete controller")}</button></div></div>`;
     this.dialog.showModal();
     const entitySelector = this.setupSelector("#entities", {entity:{filter:{domain:"climate"},multiple:true}}, this.entityIds(controller));
     const timeSelector = this.setupSelector("#time", {time:{no_second:true}}, auto.time);
@@ -225,7 +239,24 @@ class ClimateSleepCurveCard extends HTMLElement {
         if (this.dialog.querySelector("#automatic").checked && !weekdays.length) return showMessage(this, t("请至少勾选一个生效星期", "Select at least one active weekday"));
         const button = this.dialog.querySelector("#save");
         button.disabled = true;
-        await this._hass.callWS({type:"climate_sleep_curve/controller/save",controller:{...controller,name:this.dialog.querySelector("#name").value,climate_entity_ids:entityIds,climate_entity_id:entityIds[0],profile_id:this.dialog.querySelector("#profile").value,turn_off_after_completion:supportsCompletionPowerOff&&this.dialog.querySelector("#turn-off-after-completion").checked,automatic_start:{enabled:this.dialog.querySelector("#automatic").checked,time,weekdays}},expected_revision:controller.revision});
+        await this._hass.callWS({
+          type: "climate_sleep_curve/controller/save",
+          controller: {
+            ...controller,
+            name: this.dialog.querySelector("#name").value,
+            climate_entity_ids: entityIds,
+            climate_entity_id: entityIds[0],
+            profile_id: this.dialog.querySelector("#profile").value,
+            turn_off_after_completion: supportsCompletionPowerOff
+              && this.dialog.querySelector("#turn-off-after-completion").checked,
+            automatic_start: {
+              enabled: this.dialog.querySelector("#automatic").checked,
+              time,
+              weekdays,
+            },
+          },
+          expected_revision: controller.revision,
+        });
         this.dialog.close(); await this.refresh();
       } catch(error) { const button=this.dialog.querySelector("#save");if(button)button.disabled=false;showMessage(this, errorMessage(error)); }
     };

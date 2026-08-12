@@ -209,6 +209,9 @@ var ClimateSleepCurveCard = class extends HTMLElement {
   entityIds(item) {
     return item?.climate_entity_ids || (item?.climate_entity_id ? [item.climate_entity_id] : []);
   }
+  supportsCompletionPowerOff() {
+    return this.state?.capabilities?.turn_off_after_completion === true;
+  }
   commonFanModes() {
     const lists = this.entityIds(this.controller).map((entityId) => this._hass.states[entityId]?.attributes?.fan_modes).filter((modes) => Array.isArray(modes)).map((modes) => modes.filter((mode) => typeof mode === "string" && mode.length));
     if (!lists.length || lists.length !== this.entityIds(this.controller).length) return [];
@@ -357,9 +360,17 @@ var ClimateSleepCurveCard = class extends HTMLElement {
   openController(controller) {
     const profiles = this.state.profiles;
     const auto = controller.automatic_start;
-    const supportsCompletionPowerOff = this.state?.capabilities?.turn_off_after_completion === true;
+    const supportsCompletionPowerOff = this.supportsCompletionPowerOff();
+    const powerOffDisabled = supportsCompletionPowerOff ? "" : "disabled";
+    const powerOffHelp = supportsCompletionPowerOff ? t(
+      "\u4EC5\u6B63\u5E38\u8FD0\u884C\u5230\u66F2\u7EBF\u7ED3\u675F\u65F6\u751F\u6548\uFF1B\u624B\u52A8\u505C\u6B62\u3001\u91CD\u65B0\u5F00\u59CB\u3001\u5220\u9664\u63A7\u5236\u5668\u6216 Home Assistant \u91CD\u542F\u6062\u590D\u90FD\u4E0D\u4F1A\u5173\u95ED\u7A7A\u8C03\u3002\u6240\u9009\u7A7A\u8C03\u5FC5\u987B\u652F\u6301\u5173\u673A\u670D\u52A1\u3002",
+      "Only applies when the curve reaches its natural end. Manual stop, restart, controller deletion, and Home Assistant recovery never turn devices off. Every selected climate entity must support turn off."
+    ) : t(
+      "\u8BF7\u5148\u5C06 Climate Sleep Curve \u540E\u7AEF\u66F4\u65B0\u5230 0.5.0 \u6216\u66F4\u9AD8\u7248\u672C\u3002",
+      "Update the Climate Sleep Curve backend to version 0.5.0 or later first."
+    );
     const weekdayLabels = [t("\u5468\u4E00", "Mon"), t("\u5468\u4E8C", "Tue"), t("\u5468\u4E09", "Wed"), t("\u5468\u56DB", "Thu"), t("\u5468\u4E94", "Fri"), t("\u5468\u516D", "Sat"), t("\u5468\u65E5", "Sun")];
-    this.dialog.innerHTML = `<div class="editor"><div class="title">${t("\u63A7\u5236\u5668\u8BBE\u7F6E", "Controller settings")}</div><label>${t("\u540D\u79F0", "Name")}</label><input class="field" id="name" value="${esc(controller.name)}"><label>${t("\u7A7A\u8C03\u5B9E\u4F53\uFF08\u53EF\u591A\u9009\uFF09", "Climate entities (multiple allowed)")}</label><ha-selector id="entities"></ha-selector><label>${t("\u4E0B\u6B21\u4F1A\u8BDD\u4F7F\u7528\u7684\u66F2\u7EBF", "Profile for the next session")}</label><select id="profile">${profiles.map((profile) => `<option ${profile.id === controller.profile_id ? "selected" : ""} value="${profile.id}">${esc(profile.name)}</option>`).join("")}</select><div class="setting-row"><ha-switch id="automatic"></ha-switch><label for="automatic">${t("\u6BCF\u5929\u81EA\u52A8\u542F\u52A8", "Start automatically")}</label></div><label>${t("\u542F\u52A8\u65F6\u95F4", "Start time")}</label><ha-selector id="time"></ha-selector><label>${t("\u751F\u6548\u65E5\u671F", "Active weekdays")}</label><div class="weekdays">${weekdayLabels.map((label, index) => `<label class="weekday"><ha-checkbox data-day="${index}"></ha-checkbox><span>${label}</span></label>`).join("")}</div><div class="setting-row"><ha-switch id="turn-off-after-completion" ${supportsCompletionPowerOff ? "" : "disabled"}></ha-switch><label for="turn-off-after-completion">${t("\u66F2\u7EBF\u81EA\u7136\u7ED3\u675F\u540E\u5173\u95ED\u7A7A\u8C03", "Turn off climate devices after natural completion")}</label></div><p class="muted">${supportsCompletionPowerOff ? t("\u4EC5\u6B63\u5E38\u8FD0\u884C\u5230\u66F2\u7EBF\u7ED3\u675F\u65F6\u751F\u6548\uFF1B\u624B\u52A8\u505C\u6B62\u3001\u91CD\u65B0\u5F00\u59CB\u3001\u5220\u9664\u63A7\u5236\u5668\u6216 Home Assistant \u91CD\u542F\u6062\u590D\u90FD\u4E0D\u4F1A\u5173\u95ED\u7A7A\u8C03\u3002\u6240\u9009\u7A7A\u8C03\u5FC5\u987B\u652F\u6301\u5173\u673A\u670D\u52A1\u3002", "Only applies when the curve reaches its natural end. Manual stop, restart, controller deletion, and Home Assistant recovery never turn devices off. Every selected climate entity must support turn off.") : t("\u8BF7\u5148\u5C06 Climate Sleep Curve \u540E\u7AEF\u66F4\u65B0\u5230 0.5.0 \u6216\u66F4\u9AD8\u7248\u672C\u3002", "Update the Climate Sleep Curve backend to version 0.5.0 or later first.")}</p><div class="actions"><button id="save">${t("\u4FDD\u5B58", "Save")}</button><button class="secondary" id="cancel">${t("\u53D6\u6D88", "Cancel")}</button><button class="danger" id="delete">${t("\u5220\u9664\u63A7\u5236\u5668", "Delete controller")}</button></div></div>`;
+    this.dialog.innerHTML = `<div class="editor"><div class="title">${t("\u63A7\u5236\u5668\u8BBE\u7F6E", "Controller settings")}</div><label>${t("\u540D\u79F0", "Name")}</label><input class="field" id="name" value="${esc(controller.name)}"><label>${t("\u7A7A\u8C03\u5B9E\u4F53\uFF08\u53EF\u591A\u9009\uFF09", "Climate entities (multiple allowed)")}</label><ha-selector id="entities"></ha-selector><label>${t("\u4E0B\u6B21\u4F1A\u8BDD\u4F7F\u7528\u7684\u66F2\u7EBF", "Profile for the next session")}</label><select id="profile">${profiles.map((profile) => `<option ${profile.id === controller.profile_id ? "selected" : ""} value="${profile.id}">${esc(profile.name)}</option>`).join("")}</select><div class="setting-row"><ha-switch id="automatic"></ha-switch><label for="automatic">${t("\u6BCF\u5929\u81EA\u52A8\u542F\u52A8", "Start automatically")}</label></div><label>${t("\u542F\u52A8\u65F6\u95F4", "Start time")}</label><ha-selector id="time"></ha-selector><label>${t("\u751F\u6548\u65E5\u671F", "Active weekdays")}</label><div class="weekdays">${weekdayLabels.map((label, index) => `<label class="weekday"><ha-checkbox data-day="${index}"></ha-checkbox><span>${label}</span></label>`).join("")}</div><div class="setting-row"><ha-switch id="turn-off-after-completion" ${powerOffDisabled}></ha-switch><label for="turn-off-after-completion">${t("\u66F2\u7EBF\u81EA\u7136\u7ED3\u675F\u540E\u5173\u95ED\u7A7A\u8C03", "Turn off climate devices after natural completion")}</label></div><p class="muted">${powerOffHelp}</p><div class="actions"><button id="save">${t("\u4FDD\u5B58", "Save")}</button><button class="secondary" id="cancel">${t("\u53D6\u6D88", "Cancel")}</button><button class="danger" id="delete">${t("\u5220\u9664\u63A7\u5236\u5668", "Delete controller")}</button></div></div>`;
     this.dialog.showModal();
     const entitySelector = this.setupSelector("#entities", { entity: { filter: { domain: "climate" }, multiple: true } }, this.entityIds(controller));
     const timeSelector = this.setupSelector("#time", { time: { no_second: true } }, auto.time);
@@ -379,7 +390,23 @@ var ClimateSleepCurveCard = class extends HTMLElement {
         if (this.dialog.querySelector("#automatic").checked && !weekdays.length) return showMessage(this, t("\u8BF7\u81F3\u5C11\u52FE\u9009\u4E00\u4E2A\u751F\u6548\u661F\u671F", "Select at least one active weekday"));
         const button = this.dialog.querySelector("#save");
         button.disabled = true;
-        await this._hass.callWS({ type: "climate_sleep_curve/controller/save", controller: { ...controller, name: this.dialog.querySelector("#name").value, climate_entity_ids: entityIds, climate_entity_id: entityIds[0], profile_id: this.dialog.querySelector("#profile").value, turn_off_after_completion: supportsCompletionPowerOff && this.dialog.querySelector("#turn-off-after-completion").checked, automatic_start: { enabled: this.dialog.querySelector("#automatic").checked, time, weekdays } }, expected_revision: controller.revision });
+        await this._hass.callWS({
+          type: "climate_sleep_curve/controller/save",
+          controller: {
+            ...controller,
+            name: this.dialog.querySelector("#name").value,
+            climate_entity_ids: entityIds,
+            climate_entity_id: entityIds[0],
+            profile_id: this.dialog.querySelector("#profile").value,
+            turn_off_after_completion: supportsCompletionPowerOff && this.dialog.querySelector("#turn-off-after-completion").checked,
+            automatic_start: {
+              enabled: this.dialog.querySelector("#automatic").checked,
+              time,
+              weekdays
+            }
+          },
+          expected_revision: controller.revision
+        });
         this.dialog.close();
         await this.refresh();
       } catch (error) {

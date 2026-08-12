@@ -105,10 +105,15 @@ test("source uses non-blocking in-card dialogs instead of browser dialogs", asyn
 
 test("controller editor persists the opt-in natural-completion power setting", async () => {
   const source = await readFile(new URL("../src/card.mjs", import.meta.url), "utf8");
+  const card = new Card();
 
   assert.match(source, /id="turn-off-after-completion"/);
-  assert.match(source, /turn_off_after_completion:supportsCompletionPowerOff&&this\.dialog\.querySelector\("#turn-off-after-completion"\)\.checked/);
-  assert.match(source, /capabilities\?\.turn_off_after_completion === true/);
+  assert.match(source, /turn_off_after_completion: supportsCompletionPowerOff/);
   assert.match(source, /turn_off_after_completion:false/);
   assert.doesNotMatch(source, /callService\s*\(/);
+
+  card.state = {capabilities: {turn_off_after_completion: true}};
+  assert.equal(card.supportsCompletionPowerOff(), true);
+  card.state = {capabilities: {}};
+  assert.equal(card.supportsCompletionPowerOff(), false);
 });
