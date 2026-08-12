@@ -21,14 +21,16 @@
 
 ## 文件职责
 
-- `climate-sleep-curve-card.js`：浏览器直接加载的完整发布文件，是 HACS `filename` 指向的安装产物。
+- `climate-sleep-curve-card.js`：由 `src/card.mjs` 打包生成的发布文件，是 HACS `filename` 指向的安装产物；不要直接编辑。
+- `src/card.mjs`：卡片与编辑器的主运行时源码。
+- `src/ui-helpers.mjs`：Home Assistant 风格消息、输入和确认交互，以及执行结果展示元数据。
 - `src/curve-utils.mjs`：温度吸附、时长调整和推荐曲线等可独立测试算法。
-- `test/curve-utils.test.mjs`：使用 Node 内置测试运行器的单元测试。
+- `test/`：使用 Node 内置测试运行器的算法和卡片行为测试。
 - `package.json`：版本与校验脚本。
 - `hacs.json`：HACS Dashboard Plugin 元数据。
 - `README.md`：用户安装、配置、使用和排错说明。
 
-当前仓库没有自动构建步骤。修改运行时代码时必须直接更新 `climate-sleep-curve-card.js`；如果把通用算法同步抽取到 `src/`，应保证发布文件行为一致并增加测试。不要提交 `node_modules/`。
+修改 `src/` 后必须运行 `npm run build` 更新发布文件，并用 `npm run check:bundle` 确认源码和发布文件一致。提交发布文件和源码，但不要提交 `node_modules/`。
 
 ## Home Assistant 卡片接口
 
@@ -128,7 +130,7 @@
 - 不把错误对象、token、连接信息或完整后端状态写入 DOM、控制台或持久存储。
 - 不使用 `eval`、动态脚本注入或不可信 URL。
 - 用户输入先在前端提供基本约束，但最终必须依赖后端权威校验。
-- `confirm`/`prompt` 返回值和空输入需要显式处理。
+- 输入和确认使用卡片内的 Home Assistant 风格组件；空输入和取消操作需要显式处理，不得使用浏览器阻塞式 `alert`、`confirm` 或 `prompt`。
 - 不吞掉影响用户结果的异常；仅允许对尽力清理这类次要操作做受控忽略。
 
 ## 测试与验证
@@ -137,6 +139,7 @@
 
 ```bash
 npm test
+npm run check:bundle
 npm run check
 git diff --check
 ```
@@ -178,7 +181,7 @@ UI 或协议变更还应在真实 Home Assistant 中手动验证：
 - `hacs.json` 的 `filename` 必须与根目录发布文件名一致。
 - 发布前使用兼容后端版本进行端到端验证。
 - 如果协议不向后兼容，在 README 和发布说明中明确最低后端版本。
-- 当前没有构建产物生成流程；不要声称 `src/` 会自动生成根目录文件。
+- 发布前运行 `npm run build` 生成根目录文件，并用 `npm run check:bundle` 检查它与 `src/` 一致。
 
 ## 代码评审清单
 

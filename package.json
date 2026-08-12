@@ -1,6 +1,14 @@
 {
   "name": "climate-sleep-curve-card",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "type": "module",
-  "scripts": {"test": "node --test test/*.test.mjs", "check": "node --check climate-sleep-curve-card.js"}
+  "scripts": {
+    "build": "esbuild src/card.mjs --bundle --format=esm --target=es2022 --outfile=climate-sleep-curve-card.js",
+    "test": "node --test test/*.test.mjs",
+    "check": "node --check climate-sleep-curve-card.js",
+    "check:bundle": "npm run build && git diff --exit-code -- climate-sleep-curve-card.js"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2"
+  }
 }

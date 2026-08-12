@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import {readFile} from "node:fs/promises";
 import test from "node:test";
 
 const registry = new Map();
@@ -10,7 +11,8 @@ globalThis.customElements = {
 Object.defineProperty(globalThis, "navigator", {value: {language: "en"}, configurable: true});
 globalThis.window = {customCards: []};
 
-await import("../climate-sleep-curve-card.js");
+await import("../src/card.mjs");
+const {resultMeta} = await import("../src/ui-helpers.mjs");
 const Card = customElements.get("climate-sleep-curve-card");
 
 test("disconnect releases the subscription for a later reconnect", () => {
@@ -53,4 +55,18 @@ test("automatic start time is validated and normalized", () => {
   assert.equal(card.normalizeTime("08:04:09"), "08:04:09");
   assert.equal(card.normalizeTime("24:00"), null);
   assert.equal(card.normalizeTime(undefined), null);
+});
+
+test("per-entity execution outcomes have readable presentation metadata", () => {
+  assert.deepEqual(resultMeta("applied"), {label: "Applied", tone: "success", icon: "mdi:check-circle"});
+  assert.equal(resultMeta("failed").tone, "error");
+  assert.equal(resultMeta("skipped_off").tone, "warning");
+});
+
+test("source uses non-blocking in-card dialogs instead of browser dialogs", async () => {
+  const sources = await Promise.all([
+    readFile(new URL("../src/card.mjs", import.meta.url), "utf8"),
+    readFile(new URL("../src/ui-helpers.mjs", import.meta.url), "utf8"),
+  ]);
+  assert.doesNotMatch(sources.join("\n"), /\b(?:alert|prompt|confirm)\s*\(/);
 });

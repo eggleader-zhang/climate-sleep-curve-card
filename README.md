@@ -13,11 +13,12 @@ Climate Sleep Curve Card 是 [Climate Sleep Curve](http://172.20.0.3:3000/egglea
 - 生成推荐舒适曲线。
 - 保存、复制和删除曲线。
 - 在一个控制器中多选 `climate` 实体并选择默认曲线。
+- 在曲线管理中直接设置控制器下一次会话使用的默认曲线。
 - 使用 Home Assistant 风格的时间选择器和星期勾选器配置自动启动。
 - 通过独立的曲线管理入口新建、查看、编辑、复制和删除多条曲线。
 - 配置按时间和星期自动启动。
 - 启动、停止和重新开始会话。
-- 显示空调状态、目标温度、会话进度和下一节点。
+- 显示每台空调的状态、目标温度、最近一次节点执行结果、会话进度和下一节点。
 - 图形化卡片编辑器、YAML 配置、深浅色主题、中英文界面。
 - 多页面编辑时通过修订号检测并发覆盖。
 
@@ -50,13 +51,13 @@ Climate Sleep Curve Card 是 [Climate Sleep Curve](http://172.20.0.3:3000/egglea
 3. 添加以下资源地址：
 
    ```text
-   /local/climate-sleep-curve-card.js?v=0.2.1
+   /local/climate-sleep-curve-card.js?v=0.3.0
    ```
 
 4. 资源类型选择 **JavaScript 模块**。
 5. 刷新浏览器页面。
 
-`/config/www/` 会映射为 `/local/`。升级文件后可以修改查询参数，例如从 `v=0.2.0` 改为 `v=0.2.1`，以绕过浏览器缓存。
+`/config/www/` 会映射为 `/local/`。升级文件后可以修改查询参数，例如从 `v=0.2.1` 改为 `v=0.3.0`，以绕过浏览器缓存。
 
 ## 添加卡片
 
@@ -113,7 +114,7 @@ compact: false
 
 ## 编辑温度曲线
 
-点击卡片中的“曲线管理”，可以新建、选择、编辑、复制或删除多条曲线。控制器当前使用的默认曲线会在列表中标记；切换默认曲线请进入“控制器”设置。编辑曲线时：
+点击卡片中的“曲线管理”，可以新建、选择、编辑、复制或删除多条曲线。控制器当前使用的默认曲线会在列表中标记；选择其他曲线后，可以直接点击“设为默认曲线”。编辑曲线时：
 
 - 使用“时长”滑块选择 4～12 小时。
 - 垂直拖动节点调整温度。
@@ -160,7 +161,7 @@ compact: false
 卡片会显示：
 
 - 当前使用的曲线名称。
-- 绑定空调的状态和目标温度。
+- 绑定空调的状态、目标温度，以及该会话最近节点对每台设备的执行结果（已应用、无需调整、已跳过或失败）。
 - 会话运行或空闲状态。
 - 基于开始和结束时间计算的进度条。
 - 下一节点的本地时间和摄氏目标温度。
@@ -225,7 +226,7 @@ compact: false
 
 ## 更新与卸载
 
-更新时替换 `climate-sleep-curve-card.js`，并刷新浏览器缓存。多空调字段要求后端 `0.2.0` 或更高版本，前后端应配套升级。
+更新时替换 `climate-sleep-curve-card.js`，并刷新浏览器缓存。完整的逐设备结果展示要求后端 `0.3.0` 或更高版本，前后端应配套升级。
 
 卸载卡片：
 
@@ -237,12 +238,14 @@ compact: false
 
 ## 开发
 
-本项目使用浏览器原生 Web Components 和 Home Assistant 前端对象，不依赖打包框架：
+本项目使用浏览器原生 Web Components 和 Home Assistant 前端对象，并用 esbuild 将模块化源码生成 HACS 发布文件：
 
 ```text
-climate-sleep-curve-card.js  # HACS 和手动安装使用的发布文件
+climate-sleep-curve-card.js  # 由源码生成，供 HACS 和手动安装使用
+src/card.mjs                 # 卡片与编辑器主源码
+src/ui-helpers.mjs           # Home Assistant 风格交互与结果展示
 src/curve-utils.mjs          # 可独立测试的曲线算法
-test/curve-utils.test.mjs    # Node 内置测试运行器测试
+test/                        # Node 内置测试运行器测试
 hacs.json                    # HACS Dashboard 元数据
 package.json                 # 脚本和版本
 ```
@@ -250,14 +253,17 @@ package.json                 # 脚本和版本
 运行校验：
 
 ```bash
+npm ci
+npm run build
 npm test
+npm run check:bundle
 npm run check
 ```
 
-`npm test` 运行曲线算法单元测试，`npm run check` 检查发布文件语法。修改功能时需要同时确认桌面端、窄屏触控、键盘操作、深浅色主题和中英文界面。
+`npm run build` 更新根目录发布文件，`npm test` 运行算法与卡片行为测试，`npm run check:bundle` 检查发布文件和源码一致，`npm run check` 检查发布文件语法。修改功能时需要同时确认桌面端、窄屏触控、键盘操作、深浅色主题和中英文界面。
 
 贡献或自动化修改前请阅读 [AGENTS.md](AGENTS.md)。
 
 ## 版本与许可证
 
-当前版本为 `0.2.1`，采用 [MIT License](LICENSE)。多空调功能需要 Climate Sleep Curve 后端 `0.2.0` 或更高版本。
+当前版本为 `0.3.0`，采用 [MIT License](LICENSE)。完整功能需要 Climate Sleep Curve 后端 `0.3.0` 或更高版本。

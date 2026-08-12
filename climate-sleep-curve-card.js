@@ -1,50 +1,161 @@
-const t = (zh, en) => (navigator.language || "").toLowerCase().startsWith("zh") ? zh : en;
-const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[char]));
-const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
-const snap = (value, step, min = 0) => Math.round((value - min) / step) * step + min;
+// src/curve-utils.mjs
+var clamp = (value, min, max) => Math.min(max, Math.max(min, value));
+var snap = (value, step, min = 0) => Math.round((value - min) / step) * step + min;
+function resizePoints(points, hours) {
+  const result = points.filter((point) => point.offset_minutes < hours * 60).map((point) => ({ ...point }));
+  const lastTemperature = result.at(-1)?.temperature ?? 26;
+  for (let hour = 0; hour < hours; hour += 1) {
+    if (!result.some((point) => point.offset_minutes === hour * 60)) {
+      result.push({ offset_minutes: hour * 60, temperature: lastTemperature });
+    }
+  }
+  return result.sort((a, b) => a.offset_minutes - b.offset_minutes);
+}
 
-class ClimateSleepCurveCard extends HTMLElement {
-  static getConfigElement() { return document.createElement("climate-sleep-curve-card-editor"); }
-  static getStubConfig() { return {}; }
+// src/ui-helpers.mjs
+var t = (zh, en) => (navigator.language || "").toLowerCase().startsWith("zh") ? zh : en;
+var esc = (value) => String(value ?? "").replace(
+  /[&<>"']/g,
+  (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]
+);
+var errorMessage = (error) => error?.message || String(error);
+function resultMeta(result) {
+  const values = {
+    applied: [t("\u5DF2\u5E94\u7528", "Applied"), "success", "mdi:check-circle"],
+    no_change: [t("\u65E0\u9700\u8C03\u6574", "No change"), "neutral", "mdi:check"],
+    skipped_off: [t("\u8BBE\u5907\u5DF2\u5173\u95ED", "Device off"), "warning", "mdi:power"],
+    skipped_unavailable: [t("\u8BBE\u5907\u4E0D\u53EF\u7528", "Unavailable"), "warning", "mdi:cloud-off-outline"],
+    skipped_unknown: [t("\u72B6\u6001\u672A\u77E5", "Unknown"), "warning", "mdi:help-circle-outline"],
+    skipped_off_after_failure: [t("\u5931\u8D25\u540E\u5173\u95ED", "Off after failure"), "warning", "mdi:power"],
+    failed: [t("\u6267\u884C\u5931\u8D25", "Failed"), "error", "mdi:alert-circle"]
+  };
+  const [label, tone, icon] = values[result] || [result || t("\u7B49\u5F85\u6267\u884C", "Pending"), "neutral", "mdi:clock-outline"];
+  return { label, tone, icon };
+}
+function ensureAuxDialog(host) {
+  let dialog = host.shadowRoot.querySelector("#aux-dialog");
+  if (!dialog) {
+    dialog = document.createElement("dialog");
+    dialog.id = "aux-dialog";
+    host.shadowRoot.append(dialog);
+  }
+  return dialog;
+}
+function showMessage(host, message, type = "error") {
+  const container = host.dialog?.open ? host.dialog.querySelector(".editor") : host.shadowRoot.querySelector("ha-card");
+  if (!container) return;
+  container.querySelector("ha-alert[data-card-message]")?.remove();
+  const alert = document.createElement("ha-alert");
+  alert.dataset.cardMessage = "true";
+  alert.setAttribute("alert-type", type);
+  alert.textContent = message;
+  container.prepend(alert);
+  setTimeout(() => alert.remove(), type === "success" ? 3500 : 7e3);
+}
+function askConfirmation(host, { title, message, confirmLabel, danger = false }) {
+  const dialog = ensureAuxDialog(host);
+  dialog.innerHTML = `<div class="editor"><div class="title">${esc(title)}</div><p>${esc(message)}</p><div class="actions"><button class="${danger ? "danger" : ""}" id="confirm">${esc(confirmLabel)}</button><button class="secondary" id="cancel">${t("\u53D6\u6D88", "Cancel")}</button></div></div>`;
+  return new Promise((resolve) => {
+    let settled = false;
+    const onCancel = (event) => {
+      event.preventDefault();
+      finish(false);
+    };
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      dialog.removeEventListener("cancel", onCancel);
+      if (dialog.open) dialog.close();
+      resolve(value);
+    };
+    dialog.querySelector("#confirm").onclick = () => finish(true);
+    dialog.querySelector("#cancel").onclick = () => finish(false);
+    dialog.addEventListener("cancel", onCancel);
+    dialog.showModal();
+  });
+}
+function askText(host, { title, label, value = "", confirmLabel }) {
+  const dialog = ensureAuxDialog(host);
+  dialog.innerHTML = `<div class="editor"><div class="title">${esc(title)}</div><ha-textfield id="value" label="${esc(label)}" maxlength="64"></ha-textfield><div class="actions"><button id="confirm">${esc(confirmLabel)}</button><button class="secondary" id="cancel">${t("\u53D6\u6D88", "Cancel")}</button></div></div>`;
+  const field = dialog.querySelector("#value");
+  field.value = value;
+  return new Promise((resolve) => {
+    let settled = false;
+    const onCancel = (event) => {
+      event.preventDefault();
+      finish(null);
+    };
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      dialog.removeEventListener("cancel", onCancel);
+      if (dialog.open) dialog.close();
+      resolve(result);
+    };
+    const submit = () => {
+      const result = String(field.value || "").trim();
+      if (!result) {
+        field.invalid = true;
+        field.validationMessage = t("\u540D\u79F0\u4E0D\u80FD\u4E3A\u7A7A", "Name is required");
+        return;
+      }
+      finish(result);
+    };
+    dialog.querySelector("#confirm").onclick = submit;
+    dialog.querySelector("#cancel").onclick = () => finish(null);
+    field.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") submit();
+    });
+    dialog.addEventListener("cancel", onCancel);
+    dialog.showModal();
+    field.focus();
+  });
+}
 
+// src/card.mjs
+var ClimateSleepCurveCard = class extends HTMLElement {
+  static getConfigElement() {
+    return document.createElement("climate-sleep-curve-card-editor");
+  }
+  static getStubConfig() {
+    return {};
+  }
   setConfig(config) {
-    this.config = {show_climate_state: true, show_next_point: true, compact: false, ...config};
+    this.config = { show_climate_state: true, show_next_point: true, compact: false, ...config };
     if (this._loaded) this.render();
   }
-
   set hass(value) {
     this._hass = value;
-    if (!this._loaded) this.load(); else if (!this.dialog?.open) this.render();
+    if (!this._loaded) this.load();
+    else if (!this.dialog?.open) this.render();
   }
-
   connectedCallback() {
-    if (!this.shadowRoot) this.attachShadow({mode: "open"});
+    if (!this.shadowRoot) this.attachShadow({ mode: "open" });
     this.load();
   }
-
   disconnectedCallback() {
     if (this._unsubscribe) this._unsubscribe();
-    this._unsubscribe = undefined;
+    this._unsubscribe = void 0;
   }
-
   async load() {
     if (!this._hass || this._loading) return;
     this._loading = true;
     try {
-      this.state = await this._hass.callWS({type: "climate_sleep_curve/get_state"});
+      this.state = await this._hass.callWS({ type: "climate_sleep_curve/get_state" });
       this.error = null;
       if (!this._unsubscribe) {
-        this._unsubscribe = await this._hass.connection.subscribeMessage(() => { void this.refresh(); }, {type: "climate_sleep_curve/subscribe"});
+        this._unsubscribe = await this._hass.connection.subscribeMessage(() => {
+          void this.refresh();
+        }, { type: "climate_sleep_curve/subscribe" });
       }
     } catch (error) {
-      this.error = t("尚未安装或加载 Climate Sleep Curve 后端集成。", "Climate Sleep Curve backend is not installed or loaded.");
+      this.error = t("\u5C1A\u672A\u5B89\u88C5\u6216\u52A0\u8F7D Climate Sleep Curve \u540E\u7AEF\u96C6\u6210\u3002", "Climate Sleep Curve backend is not installed or loaded.");
     } finally {
       this._loading = false;
       this._loaded = true;
       this.render();
     }
   }
-
   refresh() {
     if (this._refreshPromise) {
       this._refreshQueued = true;
@@ -54,43 +165,48 @@ class ClimateSleepCurveCard extends HTMLElement {
       try {
         do {
           this._refreshQueued = false;
-          this.state = await this._hass.callWS({type: "climate_sleep_curve/get_state"});
+          this.state = await this._hass.callWS({ type: "climate_sleep_curve/get_state" });
         } while (this._refreshQueued);
         this.error = null;
       } catch (error) {
-        this.error = t("无法刷新 Climate Sleep Curve 状态。", "Unable to refresh Climate Sleep Curve state.");
+        this.error = t("\u65E0\u6CD5\u5237\u65B0 Climate Sleep Curve \u72B6\u6001\u3002", "Unable to refresh Climate Sleep Curve state.");
       } finally {
-        this._refreshPromise = undefined;
+        this._refreshPromise = void 0;
         if (!this.dialog?.open) this.render();
       }
     })();
     return this._refreshPromise;
   }
-
   get controller() {
     const configured = this.config?.controller_id;
     return this.state?.controllers.find((item) => item.id === configured) || (!configured && this.state?.controllers.length === 1 ? this.state.controllers[0] : null);
   }
-
-  get profile() { return this.state?.profiles.find((item) => item.id === this.controller?.profile_id); }
-  get session() { return this.state?.active_sessions.find((item) => item.controller_id === this.controller?.id); }
-
-  entityIds(item) { return item?.climate_entity_ids || (item?.climate_entity_id ? [item.climate_entity_id] : []); }
-
+  get profile() {
+    return this.state?.profiles.find((item) => item.id === this.controller?.profile_id);
+  }
+  get session() {
+    return this.state?.active_sessions.find((item) => item.controller_id === this.controller?.id);
+  }
+  entityIds(item) {
+    return item?.climate_entity_ids || (item?.climate_entity_id ? [item.climate_entity_id] : []);
+  }
+  entityResult(session, entityId) {
+    return session?.last_entity_results?.find((item) => item.entity_id === entityId);
+  }
   normalizeTime(value) {
     const match = /^([01]\d|2[0-3]):([0-5]\d)(?::([0-5]\d))?$/.exec(String(value || ""));
     return match ? `${match[1]}:${match[2]}:${match[3] || "00"}` : null;
   }
-
   setupSelector(selector, config, value) {
     const element = this.dialog.querySelector(selector);
     element.hass = this._hass;
     element.selector = config;
     element.value = value;
-    element.addEventListener("value-changed", (event) => { element.value = event.detail.value; });
+    element.addEventListener("value-changed", (event) => {
+      element.value = event.detail.value;
+    });
     return element;
   }
-
   render() {
     if (!this.shadowRoot) return;
     const style = `<style>
@@ -100,17 +216,26 @@ class ClimateSleepCurveCard extends HTMLElement {
       .progress{height:7px;background:var(--divider-color);border-radius:5px;margin:15px 0;overflow:hidden}.progress i{display:block;height:100%;background:var(--primary-color)}
       dialog{border:0;border-radius:18px;padding:0;background:var(--card-background-color);color:var(--primary-text-color);width:min(720px,calc(100vw - 24px));max-height:calc(100vh - 24px)}dialog::backdrop{background:#0008}.editor{padding:20px;overflow:auto;max-height:calc(100vh - 64px)}
       label{display:block;margin:14px 0 5px}.field,select{box-sizing:border-box;width:100%;padding:10px;border:1px solid var(--divider-color);border-radius:8px;background:var(--card-background-color);color:var(--primary-text-color)}
-      ha-selector{display:block}.setting-row{display:flex;align-items:center;gap:10px;margin-top:18px}.setting-row label{margin:0}.weekdays{display:grid;grid-template-columns:repeat(7,minmax(58px,1fr));gap:6px}.weekday{display:flex;align-items:center;justify-content:center;gap:2px;margin:0;padding:7px 3px;border:1px solid var(--divider-color);border-radius:10px;cursor:pointer}.entity-list{display:grid;gap:5px;margin:12px 0}.entity-state{padding:7px 10px;border-radius:9px;background:color-mix(in srgb,var(--primary-color) 5%,transparent)}
+      ha-selector,ha-textfield,ha-alert{display:block}.setting-row{display:flex;align-items:center;gap:10px;margin-top:18px}.setting-row label{margin:0}.weekdays{display:grid;grid-template-columns:repeat(7,minmax(58px,1fr));gap:6px}.weekday{display:flex;align-items:center;justify-content:center;gap:2px;margin:0;padding:7px 3px;border:1px solid var(--divider-color);border-radius:10px;cursor:pointer}.entity-list{display:grid;gap:5px;margin:12px 0}.entity-state{display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:9px;background:color-mix(in srgb,var(--primary-color) 5%,transparent)}.entity-main{flex:1;min-width:0}.result{display:inline-flex;align-items:center;gap:4px;padding:3px 7px;border-radius:12px;font-size:12px;white-space:nowrap}.result ha-icon{--mdc-icon-size:16px}.result.success{color:var(--success-color);background:color-mix(in srgb,var(--success-color) 12%,transparent)}.result.warning{color:var(--warning-color);background:color-mix(in srgb,var(--warning-color) 12%,transparent)}.result.error{color:var(--error-color);background:color-mix(in srgb,var(--error-color) 12%,transparent)}.result.neutral{color:var(--secondary-text-color);background:var(--divider-color)}
       .chart{touch-action:none;width:100%;height:auto;background:color-mix(in srgb,var(--primary-color) 5%,transparent);border-radius:12px}.grid{stroke:var(--divider-color);stroke-width:1}.curve{fill:none;stroke:var(--primary-color);stroke-width:3}.area{fill:color-mix(in srgb,var(--primary-color) 18%,transparent)}.dot{fill:var(--primary-color);stroke:var(--card-background-color);stroke-width:3;cursor:ns-resize}.hit{fill:transparent;cursor:ns-resize}.axis{fill:var(--secondary-text-color);font-size:11px}.bubble{fill:var(--card-background-color);stroke:var(--primary-color)}
       .notice{padding:12px;border-radius:8px;background:color-mix(in srgb,var(--error-color) 12%,transparent);color:var(--error-color)}@media(max-width:520px){ha-card{padding:16px}.editor{padding:14px}.title{font-size:18px}.weekdays{grid-template-columns:repeat(4,1fr)}}
     </style>`;
-    if (this.error) { this.shadowRoot.innerHTML = `${style}<ha-card><div class="notice">${esc(this.error)}</div></ha-card>`; return; }
-    if (!this.state) { this.shadowRoot.innerHTML = `${style}<ha-card>${t("正在加载…", "Loading…")}</ha-card>`; return; }
+    if (this.error) {
+      this.shadowRoot.innerHTML = `${style}<ha-card><div class="notice">${esc(this.error)}</div></ha-card>`;
+      return;
+    }
+    if (!this.state) {
+      this.shadowRoot.innerHTML = `${style}<ha-card>${t("\u6B63\u5728\u52A0\u8F7D\u2026", "Loading\u2026")}</ha-card>`;
+      return;
+    }
     if (!this.controller) {
       const choices = this.state.controllers.map((item) => `<option value="${item.id}">${esc(item.name)}</option>`).join("");
-      this.shadowRoot.innerHTML = `${style}<ha-card><div class="title">${t("空调睡眠曲线", "Climate Sleep Curve")}</div><p class="muted">${t("选择已有控制器，或创建第一条曲线与控制器。", "Select a controller, or create your first profile and controller.")}</p>${choices ? `<select id="choose"><option value="">—</option>${choices}</select>` : ""}<div class="actions"><button id="create">${t("开始设置", "Get started")}</button></div><dialog id="dialog"></dialog></ha-card>`;
+      this.shadowRoot.innerHTML = `${style}<ha-card><div class="title">${t("\u7A7A\u8C03\u7761\u7720\u66F2\u7EBF", "Climate Sleep Curve")}</div><p class="muted">${t("\u9009\u62E9\u5DF2\u6709\u63A7\u5236\u5668\uFF0C\u6216\u521B\u5EFA\u7B2C\u4E00\u6761\u66F2\u7EBF\u4E0E\u63A7\u5236\u5668\u3002", "Select a controller, or create your first profile and controller.")}</p>${choices ? `<select id="choose"><option value="">\u2014</option>${choices}</select>` : ""}<div class="actions"><button id="create">${t("\u5F00\u59CB\u8BBE\u7F6E", "Get started")}</button></div><dialog id="dialog"></dialog></ha-card>`;
       this.bindCommon();
-      this.shadowRoot.querySelector("#choose")?.addEventListener("change", (event) => { this.config.controller_id = event.target.value; this.render(); });
+      this.shadowRoot.querySelector("#choose")?.addEventListener("change", (event) => {
+        this.config.controller_id = event.target.value;
+        this.render();
+      });
       this.shadowRoot.querySelector("#create").onclick = () => this.openSetup();
       return;
     }
@@ -123,14 +248,17 @@ class ClimateSleepCurveCard extends HTMLElement {
     if (session) {
       progress = clamp((Date.now() - Date.parse(session.started_at)) / (Date.parse(session.ends_at) - Date.parse(session.started_at)) * 100, 0, 100);
       next = session.profile_snapshot?.points.find((point) => point.offset_minutes === session.next_offset_minutes);
-      if (next) nextTime = new Intl.DateTimeFormat(undefined,{hour:"2-digit",minute:"2-digit"}).format(new Date(Date.parse(session.started_at)+next.offset_minutes*60000));
+      if (next) nextTime = new Intl.DateTimeFormat(void 0, { hour: "2-digit", minute: "2-digit" }).format(new Date(Date.parse(session.started_at) + next.offset_minutes * 6e4));
     }
     this.shadowRoot.innerHTML = `${style}<ha-card>
-      <div class="row between"><div><div class="title">${esc(this.config.name || this.controller.name)}</div><div class="muted">${esc(session?.profile_snapshot?.name || profile?.name || t("曲线不存在", "Missing profile"))}</div></div><ha-icon icon="mdi:sleep"></ha-icon></div>
-      ${this.config.show_climate_state ? `<div class="entity-list">${entityIds.map((entityId) => { const climate=this._hass.states[entityId]; return `<div class="entity-state">${esc(entityId)} · ${esc(climate?.state || "unknown")}${climate?.attributes?.temperature != null ? ` · ${esc(climate.attributes.temperature)}°` : ""}</div>`; }).join("")}</div>` : ""}
+      <div class="row between"><div><div class="title">${esc(this.config.name || this.controller.name)}</div><div class="muted">${esc(session?.profile_snapshot?.name || profile?.name || t("\u66F2\u7EBF\u4E0D\u5B58\u5728", "Missing profile"))}</div></div><ha-icon icon="mdi:sleep"></ha-icon></div>
+      ${this.config.show_climate_state ? `<div class="entity-list">${entityIds.map((entityId) => {
+      const climate = this._hass.states[entityId], result = this.entityResult(session, entityId), meta = resultMeta(result?.result);
+      return `<div class="entity-state"><div class="entity-main">${esc(climate?.attributes?.friendly_name || entityId)} \xB7 ${esc(climate?.state || "unknown")}${climate?.attributes?.temperature != null ? ` \xB7 ${esc(climate.attributes.temperature)}\xB0` : ""}<div class="muted">${esc(entityId)}</div></div>${result ? `<span class="result ${meta.tone}" title="${esc(result.error || "")}"><ha-icon icon="${meta.icon}"></ha-icon>${esc(meta.label)}</span>` : ""}</div>`;
+    }).join("")}</div>` : ""}
       <div class="progress"><i style="width:${progress}%"></i></div>
-      <div class="row between"><span>${session ? t("运行中", "Running") : t("未运行", "Idle")}</span>${this.config.show_next_point && session ? `<span class="muted">${t("下一节点", "Next")}: ${next ? `${nextTime} · ${next.temperature}°C` : t("等待结束", "finishing")}</span>` : ""}</div>
-      <div class="actions">${session ? `<button class="danger" id="stop">${t("停止", "Stop")}</button><button class="secondary" id="restart">${t("重新开始", "Restart")}</button>` : `<button id="start">${t("启动曲线", "Start curve")}</button>`}<button class="secondary" id="profiles">${t("曲线管理", "Profiles")}</button><button class="secondary" id="settings">${t("控制器", "Controller")}</button></div>
+      <div class="row between"><span>${session ? t("\u8FD0\u884C\u4E2D", "Running") : t("\u672A\u8FD0\u884C", "Idle")}</span>${this.config.show_next_point && session ? `<span class="muted">${t("\u4E0B\u4E00\u8282\u70B9", "Next")}: ${next ? `${nextTime} \xB7 ${next.temperature}\xB0C` : t("\u7B49\u5F85\u7ED3\u675F", "finishing")}</span>` : ""}</div>
+      <div class="actions">${session ? `<button class="danger" id="stop">${t("\u505C\u6B62", "Stop")}</button><button class="secondary" id="restart">${t("\u91CD\u65B0\u5F00\u59CB", "Restart")}</button>` : `<button id="start">${t("\u542F\u52A8\u66F2\u7EBF", "Start curve")}</button>`}<button class="secondary" id="profiles">${t("\u66F2\u7EBF\u7BA1\u7406", "Profiles")}</button><button class="secondary" id="settings">${t("\u63A7\u5236\u5668", "Controller")}</button></div>
       <dialog id="dialog"></dialog>
     </ha-card>`;
     this.bindCommon();
@@ -140,103 +268,149 @@ class ClimateSleepCurveCard extends HTMLElement {
     this.shadowRoot.querySelector("#profiles").onclick = () => this.openProfiles(profile?.id);
     this.shadowRoot.querySelector("#settings").onclick = () => this.openController(this.controller);
   }
-
-  bindCommon() { this.dialog = this.shadowRoot.querySelector("#dialog"); }
-
-  async action(action) {
-    try { await this._hass.callWS({type: `climate_sleep_curve/session/${action}`, controller_id: this.controller.id}); await this.refresh(); }
-    catch (error) { alert(error.message || String(error)); }
+  bindCommon() {
+    this.dialog = this.shadowRoot.querySelector("#dialog");
   }
-
+  async action(action) {
+    try {
+      await this._hass.callWS({ type: `climate_sleep_curve/session/${action}`, controller_id: this.controller.id });
+      await this.refresh();
+    } catch (error) {
+      showMessage(this, errorMessage(error));
+    }
+  }
   openSetup() {
-    this.dialog.innerHTML = `<div class="editor"><div class="title">${t("创建睡眠曲线", "Create sleep curve")}</div><label>${t("曲线名称", "Profile name")}</label><input class="field" id="pname" value="${t("默认睡眠曲线", "Default sleep curve")}"><label>${t("控制器名称", "Controller name")}</label><input class="field" id="cname" value="${t("卧室睡眠曲线", "Bedroom sleep curve")}"><label>${t("空调实体（可多选）", "Climate entities (multiple allowed)")}</label><ha-selector id="entities"></ha-selector><div class="actions"><button id="save">${t("创建", "Create")}</button><button class="secondary" id="cancel">${t("取消", "Cancel")}</button></div></div>`;
+    this.dialog.innerHTML = `<div class="editor"><div class="title">${t("\u521B\u5EFA\u7761\u7720\u66F2\u7EBF", "Create sleep curve")}</div><label>${t("\u66F2\u7EBF\u540D\u79F0", "Profile name")}</label><input class="field" id="pname" value="${t("\u9ED8\u8BA4\u7761\u7720\u66F2\u7EBF", "Default sleep curve")}"><label>${t("\u63A7\u5236\u5668\u540D\u79F0", "Controller name")}</label><input class="field" id="cname" value="${t("\u5367\u5BA4\u7761\u7720\u66F2\u7EBF", "Bedroom sleep curve")}"><label>${t("\u7A7A\u8C03\u5B9E\u4F53\uFF08\u53EF\u591A\u9009\uFF09", "Climate entities (multiple allowed)")}</label><ha-selector id="entities"></ha-selector><div class="actions"><button id="save">${t("\u521B\u5EFA", "Create")}</button><button class="secondary" id="cancel">${t("\u53D6\u6D88", "Cancel")}</button></div></div>`;
     this.dialog.showModal();
-    const entitySelector = this.setupSelector("#entities", {entity:{filter:{domain:"climate"},multiple:true}}, []);
+    const entitySelector = this.setupSelector("#entities", { entity: { filter: { domain: "climate" }, multiple: true } }, []);
     this.dialog.querySelector("#cancel").onclick = () => this.dialog.close();
     this.dialog.querySelector("#save").onclick = async () => {
-      const entityIds = Array.isArray(entitySelector.value) ? entitySelector.value : (entitySelector.value ? [entitySelector.value] : []);
-      if (!entityIds.length) return alert(t("请至少选择一个 climate 实体", "Select at least one climate entity"));
+      const entityIds = Array.isArray(entitySelector.value) ? entitySelector.value : entitySelector.value ? [entitySelector.value] : [];
+      if (!entityIds.length) return showMessage(this, t("\u8BF7\u81F3\u5C11\u9009\u62E9\u4E00\u4E2A climate \u5B9E\u4F53", "Select at least one climate entity"));
       const button = this.dialog.querySelector("#save");
       button.disabled = true;
       let profile = null;
       try {
-        profile = await this._hass.callWS({type:"climate_sleep_curve/profile/save", profile:{name:this.dialog.querySelector("#pname").value,duration_minutes:480,interpolation:"step",points:[26.5,26.5,27,27.5,28,28,27.5,27].map((temperature,index)=>({offset_minutes:index*60,temperature}))}, expected_revision:null});
-        const controller = await this._hass.callWS({type:"climate_sleep_curve/controller/save",controller:{name:this.dialog.querySelector("#cname").value,climate_entity_ids:entityIds,profile_id:profile.id,enabled:true,automatic_start:{enabled:false,time:"23:00:00",weekdays:[0,1,2,3,4,5,6]}},expected_revision:null});
-        this.config.controller_id = controller.id; this.dialog.close(); await this.refresh();
+        profile = await this._hass.callWS({ type: "climate_sleep_curve/profile/save", profile: { name: this.dialog.querySelector("#pname").value, duration_minutes: 480, interpolation: "step", points: [26.5, 26.5, 27, 27.5, 28, 28, 27.5, 27].map((temperature, index) => ({ offset_minutes: index * 60, temperature })) }, expected_revision: null });
+        const controller = await this._hass.callWS({ type: "climate_sleep_curve/controller/save", controller: { name: this.dialog.querySelector("#cname").value, climate_entity_ids: entityIds, profile_id: profile.id, enabled: true, automatic_start: { enabled: false, time: "23:00:00", weekdays: [0, 1, 2, 3, 4, 5, 6] } }, expected_revision: null });
+        this.config.controller_id = controller.id;
+        this.dialog.close();
+        await this.refresh();
       } catch (error) {
         if (profile) {
-          try { await this._hass.callWS({type:"climate_sleep_curve/profile/delete",profile_id:profile.id,expected_revision:profile.revision}); } catch {}
+          try {
+            await this._hass.callWS({ type: "climate_sleep_curve/profile/delete", profile_id: profile.id, expected_revision: profile.revision });
+          } catch {
+          }
         }
         button.disabled = false;
-        alert(error.message || String(error));
+        showMessage(this, errorMessage(error));
       }
     };
   }
-
   openController(controller) {
     const profiles = this.state.profiles;
     const auto = controller.automatic_start;
-    const weekdayLabels = [t("周一","Mon"),t("周二","Tue"),t("周三","Wed"),t("周四","Thu"),t("周五","Fri"),t("周六","Sat"),t("周日","Sun")];
-    this.dialog.innerHTML = `<div class="editor"><div class="title">${t("控制器设置", "Controller settings")}</div><label>${t("名称", "Name")}</label><input class="field" id="name" value="${esc(controller.name)}"><label>${t("空调实体（可多选）", "Climate entities (multiple allowed)")}</label><ha-selector id="entities"></ha-selector><label>${t("下次会话使用的曲线", "Profile for the next session")}</label><select id="profile">${profiles.map((profile)=>`<option ${profile.id===controller.profile_id?"selected":""} value="${profile.id}">${esc(profile.name)}</option>`).join("")}</select><div class="setting-row"><ha-switch id="automatic"></ha-switch><label for="automatic">${t("每天自动启动", "Start automatically")}</label></div><label>${t("启动时间", "Start time")}</label><ha-selector id="time"></ha-selector><label>${t("生效日期", "Active weekdays")}</label><div class="weekdays">${weekdayLabels.map((label,index)=>`<label class="weekday"><ha-checkbox data-day="${index}"></ha-checkbox><span>${label}</span></label>`).join("")}</div><div class="actions"><button id="save">${t("保存", "Save")}</button><button class="secondary" id="cancel">${t("取消", "Cancel")}</button><button class="danger" id="delete">${t("删除控制器", "Delete controller")}</button></div></div>`;
+    const weekdayLabels = [t("\u5468\u4E00", "Mon"), t("\u5468\u4E8C", "Tue"), t("\u5468\u4E09", "Wed"), t("\u5468\u56DB", "Thu"), t("\u5468\u4E94", "Fri"), t("\u5468\u516D", "Sat"), t("\u5468\u65E5", "Sun")];
+    this.dialog.innerHTML = `<div class="editor"><div class="title">${t("\u63A7\u5236\u5668\u8BBE\u7F6E", "Controller settings")}</div><label>${t("\u540D\u79F0", "Name")}</label><input class="field" id="name" value="${esc(controller.name)}"><label>${t("\u7A7A\u8C03\u5B9E\u4F53\uFF08\u53EF\u591A\u9009\uFF09", "Climate entities (multiple allowed)")}</label><ha-selector id="entities"></ha-selector><label>${t("\u4E0B\u6B21\u4F1A\u8BDD\u4F7F\u7528\u7684\u66F2\u7EBF", "Profile for the next session")}</label><select id="profile">${profiles.map((profile) => `<option ${profile.id === controller.profile_id ? "selected" : ""} value="${profile.id}">${esc(profile.name)}</option>`).join("")}</select><div class="setting-row"><ha-switch id="automatic"></ha-switch><label for="automatic">${t("\u6BCF\u5929\u81EA\u52A8\u542F\u52A8", "Start automatically")}</label></div><label>${t("\u542F\u52A8\u65F6\u95F4", "Start time")}</label><ha-selector id="time"></ha-selector><label>${t("\u751F\u6548\u65E5\u671F", "Active weekdays")}</label><div class="weekdays">${weekdayLabels.map((label, index) => `<label class="weekday"><ha-checkbox data-day="${index}"></ha-checkbox><span>${label}</span></label>`).join("")}</div><div class="actions"><button id="save">${t("\u4FDD\u5B58", "Save")}</button><button class="secondary" id="cancel">${t("\u53D6\u6D88", "Cancel")}</button><button class="danger" id="delete">${t("\u5220\u9664\u63A7\u5236\u5668", "Delete controller")}</button></div></div>`;
     this.dialog.showModal();
-    const entitySelector = this.setupSelector("#entities", {entity:{filter:{domain:"climate"},multiple:true}}, this.entityIds(controller));
-    const timeSelector = this.setupSelector("#time", {time:{no_second:true}}, auto.time);
+    const entitySelector = this.setupSelector("#entities", { entity: { filter: { domain: "climate" }, multiple: true } }, this.entityIds(controller));
+    const timeSelector = this.setupSelector("#time", { time: { no_second: true } }, auto.time);
     this.dialog.querySelector("#automatic").checked = auto.enabled;
-    this.dialog.querySelectorAll("ha-checkbox[data-day]").forEach((checkbox) => { checkbox.checked=auto.weekdays.includes(Number(checkbox.dataset.day)); });
+    this.dialog.querySelectorAll("ha-checkbox[data-day]").forEach((checkbox) => {
+      checkbox.checked = auto.weekdays.includes(Number(checkbox.dataset.day));
+    });
     this.dialog.querySelector("#cancel").onclick = () => this.dialog.close();
     this.dialog.querySelector("#save").onclick = async () => {
       try {
-        const entityIds = Array.isArray(entitySelector.value) ? entitySelector.value : (entitySelector.value ? [entitySelector.value] : []);
-        if (!entityIds.length) return alert(t("请至少选择一个 climate 实体", "Select at least one climate entity"));
+        const entityIds = Array.isArray(entitySelector.value) ? entitySelector.value : entitySelector.value ? [entitySelector.value] : [];
+        if (!entityIds.length) return showMessage(this, t("\u8BF7\u81F3\u5C11\u9009\u62E9\u4E00\u4E2A climate \u5B9E\u4F53", "Select at least one climate entity"));
         const time = this.normalizeTime(timeSelector.value);
-        if (!time) return alert(t("请选择有效的启动时间", "Select a valid start time"));
-        const weekdays = [...this.dialog.querySelectorAll("ha-checkbox[data-day]")].filter((item)=>item.checked).map((item)=>Number(item.dataset.day));
-        if (this.dialog.querySelector("#automatic").checked && !weekdays.length) return alert(t("请至少勾选一个生效星期", "Select at least one active weekday"));
+        if (!time) return showMessage(this, t("\u8BF7\u9009\u62E9\u6709\u6548\u7684\u542F\u52A8\u65F6\u95F4", "Select a valid start time"));
+        const weekdays = [...this.dialog.querySelectorAll("ha-checkbox[data-day]")].filter((item) => item.checked).map((item) => Number(item.dataset.day));
+        if (this.dialog.querySelector("#automatic").checked && !weekdays.length) return showMessage(this, t("\u8BF7\u81F3\u5C11\u52FE\u9009\u4E00\u4E2A\u751F\u6548\u661F\u671F", "Select at least one active weekday"));
         const button = this.dialog.querySelector("#save");
         button.disabled = true;
-        await this._hass.callWS({type:"climate_sleep_curve/controller/save",controller:{...controller,name:this.dialog.querySelector("#name").value,climate_entity_ids:entityIds,climate_entity_id:entityIds[0],profile_id:this.dialog.querySelector("#profile").value,automatic_start:{enabled:this.dialog.querySelector("#automatic").checked,time,weekdays}},expected_revision:controller.revision});
-        this.dialog.close(); await this.refresh();
-      } catch(error) { const button=this.dialog.querySelector("#save");if(button)button.disabled=false;alert(error.message || String(error)); }
+        await this._hass.callWS({ type: "climate_sleep_curve/controller/save", controller: { ...controller, name: this.dialog.querySelector("#name").value, climate_entity_ids: entityIds, climate_entity_id: entityIds[0], profile_id: this.dialog.querySelector("#profile").value, automatic_start: { enabled: this.dialog.querySelector("#automatic").checked, time, weekdays } }, expected_revision: controller.revision });
+        this.dialog.close();
+        await this.refresh();
+      } catch (error) {
+        const button = this.dialog.querySelector("#save");
+        if (button) button.disabled = false;
+        showMessage(this, errorMessage(error));
+      }
     };
     this.dialog.querySelector("#delete").onclick = async () => {
-      if (!confirm(t("删除此控制器？运行中的会话会停止，但不会关闭空调。", "Delete this controller? Its session will stop without turning off the climate device."))) return;
-      try { await this._hass.callWS({type:"climate_sleep_curve/controller/delete",controller_id:controller.id,expected_revision:controller.revision});this.config.controller_id=undefined;this.dialog.close();await this.refresh(); }
-      catch(error){alert(error.message||String(error));}
+      const confirmed = await askConfirmation(this, {
+        title: t("\u5220\u9664\u63A7\u5236\u5668", "Delete controller"),
+        message: t("\u8FD0\u884C\u4E2D\u7684\u4F1A\u8BDD\u4F1A\u505C\u6B62\uFF0C\u4F46\u4E0D\u4F1A\u5173\u95ED\u7A7A\u8C03\u3002", "Its running session will stop without turning off any climate device."),
+        confirmLabel: t("\u5220\u9664", "Delete"),
+        danger: true
+      });
+      if (!confirmed) return;
+      try {
+        await this._hass.callWS({ type: "climate_sleep_curve/controller/delete", controller_id: controller.id, expected_revision: controller.revision });
+        this.config.controller_id = void 0;
+        this.dialog.close();
+        await this.refresh();
+      } catch (error) {
+        showMessage(this, errorMessage(error));
+      }
     };
   }
-
   openProfiles(selectedId = this.controller?.profile_id) {
     const profiles = this.state.profiles || [];
     const selected = profiles.find((item) => item.id === selectedId) || profiles[0];
-    this.dialog.innerHTML = `<div class="editor"><div class="row between"><div><div class="title">${t("曲线管理", "Profile management")}</div><div class="muted">${t("创建多条曲线，并在控制器设置中选择下次会话使用哪一条。", "Create multiple profiles and choose the next session's default in controller settings.")}</div></div><button class="secondary" id="close">${t("关闭", "Close")}</button></div>${selected ? `<label>${t("选择曲线", "Select profile")}</label><select id="profile-list">${profiles.map((profile)=>`<option value="${profile.id}" ${profile.id===selected.id?"selected":""}>${esc(profile.name)}${profile.id===this.controller?.profile_id?` · ${t("当前默认", "default")}`:""}</option>`).join("")}</select>` : `<p class="muted">${t("还没有曲线。", "No profiles yet.")}</p>`}<div class="actions">${selected ? `<button id="edit-profile">${t("编辑", "Edit")}</button><button class="secondary" id="duplicate-profile">${t("复制", "Duplicate")}</button>` : ""}<button class="secondary" id="new-profile">${t("新建曲线", "New profile")}</button></div></div>`;
+    this.dialog.innerHTML = `<div class="editor"><div class="row between"><div><div class="title">${t("\u66F2\u7EBF\u7BA1\u7406", "Profile management")}</div><div class="muted">${t("\u521B\u5EFA\u591A\u6761\u66F2\u7EBF\uFF0C\u5E76\u76F4\u63A5\u9009\u62E9\u4E0B\u6B21\u4F1A\u8BDD\u4F7F\u7528\u7684\u9ED8\u8BA4\u66F2\u7EBF\u3002", "Create multiple profiles and choose the next session's default here.")}</div></div><button class="secondary" id="close">${t("\u5173\u95ED", "Close")}</button></div>${selected ? `<label>${t("\u9009\u62E9\u66F2\u7EBF", "Select profile")}</label><select id="profile-list">${profiles.map((profile) => `<option value="${profile.id}" ${profile.id === selected.id ? "selected" : ""}>${esc(profile.name)}${profile.id === this.controller?.profile_id ? ` \xB7 ${t("\u5F53\u524D\u9ED8\u8BA4", "default")}` : ""}</option>`).join("")}</select>` : `<p class="muted">${t("\u8FD8\u6CA1\u6709\u66F2\u7EBF\u3002", "No profiles yet.")}</p>`}<div class="actions">${selected ? `<button id="edit-profile">${t("\u7F16\u8F91", "Edit")}</button><button class="secondary" id="duplicate-profile">${t("\u590D\u5236", "Duplicate")}</button>${selected.id !== this.controller?.profile_id ? `<button class="secondary" id="set-default">${t("\u8BBE\u4E3A\u9ED8\u8BA4\u66F2\u7EBF", "Set as default")}</button>` : ""}` : ""}<button class="secondary" id="new-profile">${t("\u65B0\u5EFA\u66F2\u7EBF", "New profile")}</button></div></div>`;
     if (!this.dialog.open) this.dialog.showModal();
     this.dialog.querySelector("#close").onclick = () => this.dialog.close();
     this.dialog.querySelector("#profile-list")?.addEventListener("change", (event) => this.openProfiles(event.target.value));
     this.dialog.querySelector("#edit-profile")?.addEventListener("click", () => this.openProfile(selected, true));
     this.dialog.querySelector("#duplicate-profile")?.addEventListener("click", async () => {
-      const name=prompt(t("副本名称", "Copy name"),`${selected.name} ${t("副本", "copy")}`);if(!name)return;
-      try { const copy=await this._hass.callWS({type:"climate_sleep_curve/profile/duplicate",profile_id:selected.id,name});await this.refresh();this.openProfiles(copy.id); }
-      catch(error){alert(error.message||String(error));}
+      const name = await askText(this, { title: t("\u590D\u5236\u66F2\u7EBF", "Duplicate profile"), label: t("\u526F\u672C\u540D\u79F0", "Copy name"), value: `${selected.name} ${t("\u526F\u672C", "copy")}`, confirmLabel: t("\u590D\u5236", "Duplicate") });
+      if (!name) return;
+      try {
+        const copy = await this._hass.callWS({ type: "climate_sleep_curve/profile/duplicate", profile_id: selected.id, name });
+        await this.refresh();
+        this.openProfiles(copy.id);
+      } catch (error) {
+        showMessage(this, errorMessage(error));
+      }
+    });
+    this.dialog.querySelector("#set-default")?.addEventListener("click", async (event) => {
+      const controller = this.controller;
+      if (!controller) return;
+      const button = event.currentTarget;
+      button.disabled = true;
+      try {
+        await this._hass.callWS({ type: "climate_sleep_curve/controller/save", controller: { ...controller, profile_id: selected.id }, expected_revision: controller.revision });
+        await this.refresh();
+        this.openProfiles(selected.id);
+        showMessage(this, t("\u9ED8\u8BA4\u66F2\u7EBF\u5DF2\u66F4\u65B0", "Default profile updated"), "success");
+      } catch (error) {
+        button.disabled = false;
+        showMessage(this, errorMessage(error));
+      }
     });
     this.dialog.querySelector("#new-profile").onclick = () => this.createProfile();
   }
-
   async createProfile() {
-    const name = prompt(t("新曲线名称", "New profile name"), t("新睡眠曲线", "New sleep curve"));
+    const name = await askText(this, { title: t("\u65B0\u5EFA\u66F2\u7EBF", "New profile"), label: t("\u66F2\u7EBF\u540D\u79F0", "Profile name"), value: t("\u65B0\u7761\u7720\u66F2\u7EBF", "New sleep curve"), confirmLabel: t("\u521B\u5EFA", "Create") });
     if (!name) return;
     try {
       const profile = await this._hass.callWS({
-        type:"climate_sleep_curve/profile/save",
-        profile:{name,duration_minutes:480,interpolation:"step",points:[26.5,26.5,27,27.5,28,28,27.5,27].map((temperature,index)=>({offset_minutes:index*60,temperature}))},
-        expected_revision:null,
+        type: "climate_sleep_curve/profile/save",
+        profile: { name, duration_minutes: 480, interpolation: "step", points: [26.5, 26.5, 27, 27.5, 28, 28, 27.5, 27].map((temperature, index) => ({ offset_minutes: index * 60, temperature })) },
+        expected_revision: null
       });
       await this.refresh();
       this.openProfile(profile, true);
-    } catch(error) { alert(error.message||String(error)); }
+    } catch (error) {
+      showMessage(this, errorMessage(error));
+    }
   }
-
   openProfile(profile, returnToProfiles = false) {
-    if (!profile) return alert(t("曲线不存在。", "The profile does not exist."));
+    if (!profile) return showMessage(this, t("\u66F2\u7EBF\u4E0D\u5B58\u5728\u3002", "The profile does not exist."));
     this.draft = structuredClone(profile);
     this.dirty = false;
     this.selected = 0;
@@ -244,94 +418,198 @@ class ClimateSleepCurveCard extends HTMLElement {
     this.renderProfileDialog();
     if (!this.dialog.open) this.dialog.showModal();
   }
-
   renderProfileDialog() {
     const draft = this.draft, hours = draft.duration_minutes / 60;
-    this.dialog.innerHTML = `<div class="editor"><div class="row between"><div class="title">${t("编辑温度曲线", "Edit temperature curve")}</div><button class="secondary" id="close">${t("返回", "Back")}</button></div><label>${t("名称", "Name")}</label><input class="field" id="name" maxlength="64" value="${esc(draft.name)}"><label>${t("时长", "Duration")}: <b>${hours}h</b></label><input id="duration" type="range" min="4" max="12" step="1" value="${hours}" style="width:100%"><div class="row between"><label>${t("温度曲线", "Temperature curve")}</label><button class="secondary" id="recommend">${t("推荐曲线", "Recommend")}</button></div>${this.chart(draft.points)}<p class="muted">${t("拖动节点或使用方向键调整。后台只在离散节点调温。", "Drag a point or use arrow keys. The backend adjusts only at discrete points.")}</p><div class="actions"><button id="save">${t("保存", "Save")}</button><button class="secondary" id="duplicate">${t("复制", "Duplicate")}</button><button class="secondary" id="cancel">${t("取消", "Cancel")}</button><button class="danger" id="delete">${t("删除", "Delete")}</button></div></div>`;
+    this.dialog.innerHTML = `<div class="editor"><div class="row between"><div class="title">${t("\u7F16\u8F91\u6E29\u5EA6\u66F2\u7EBF", "Edit temperature curve")}</div><button class="secondary" id="close">${t("\u8FD4\u56DE", "Back")}</button></div><label>${t("\u540D\u79F0", "Name")}</label><input class="field" id="name" maxlength="64" value="${esc(draft.name)}"><label>${t("\u65F6\u957F", "Duration")}: <b>${hours}h</b></label><input id="duration" type="range" min="4" max="12" step="1" value="${hours}" style="width:100%"><div class="row between"><label>${t("\u6E29\u5EA6\u66F2\u7EBF", "Temperature curve")}</label><button class="secondary" id="recommend">${t("\u63A8\u8350\u66F2\u7EBF", "Recommend")}</button></div>${this.chart(draft.points)}<p class="muted">${t("\u62D6\u52A8\u8282\u70B9\u6216\u4F7F\u7528\u65B9\u5411\u952E\u8C03\u6574\u3002\u540E\u53F0\u53EA\u5728\u79BB\u6563\u8282\u70B9\u8C03\u6E29\u3002", "Drag a point or use arrow keys. The backend adjusts only at discrete points.")}</p><div class="actions"><button id="save">${t("\u4FDD\u5B58", "Save")}</button><button class="secondary" id="duplicate">${t("\u590D\u5236", "Duplicate")}</button><button class="secondary" id="cancel">${t("\u53D6\u6D88", "Cancel")}</button><button class="danger" id="delete">${t("\u5220\u9664", "Delete")}</button></div></div>`;
     this.bindChart();
-    this.dialog.querySelector("#close").onclick = this.dialog.querySelector("#cancel").onclick = () => { if (!this.dirty || confirm(t("放弃未保存的修改？", "Discard unsaved changes?"))) { if(this.returnToProfiles)this.openProfiles(this.draft.id);else this.dialog.close(); } };
-    this.dialog.querySelector("#name").oninput = (event) => { this.draft.name=event.target.value;this.dirty=true; };
-    this.dialog.querySelector("#duration").onchange = (event) => {
+    const closeEditor = async () => {
+      if (this.dirty) {
+        const confirmed = await askConfirmation(this, {
+          title: t("\u653E\u5F03\u4FEE\u6539", "Discard changes"),
+          message: t("\u5C1A\u672A\u4FDD\u5B58\u7684\u66F2\u7EBF\u4FEE\u6539\u5C06\u4F1A\u4E22\u5931\u3002", "Unsaved profile changes will be lost."),
+          confirmLabel: t("\u653E\u5F03\u4FEE\u6539", "Discard"),
+          danger: true
+        });
+        if (!confirmed) return;
+      }
+      if (this.returnToProfiles) this.openProfiles(this.draft.id);
+      else this.dialog.close();
+    };
+    this.dialog.querySelector("#close").onclick = this.dialog.querySelector("#cancel").onclick = closeEditor;
+    this.dialog.querySelector("#name").oninput = (event) => {
+      this.draft.name = event.target.value;
+      this.dirty = true;
+    };
+    this.dialog.querySelector("#duration").onchange = async (event) => {
       const next = Number(event.target.value), previous = this.draft.duration_minutes / 60;
-      if (next < previous && !confirm(t("缩短时长会删除末尾节点，继续？", "Shortening removes trailing points. Continue?"))) { event.target.value=previous;return; }
-      this.draft.points=this.resize(this.draft.points,next);this.draft.duration_minutes=next*60;this.dirty=true;this.renderProfileDialog();
+      if (next < previous) {
+        const confirmed = await askConfirmation(this, {
+          title: t("\u7F29\u77ED\u66F2\u7EBF", "Shorten profile"),
+          message: t("\u7F29\u77ED\u65F6\u957F\u4F1A\u5220\u9664\u672B\u5C3E\u8282\u70B9\u3002", "Shortening the duration removes trailing points."),
+          confirmLabel: t("\u7EE7\u7EED\u7F29\u77ED", "Shorten"),
+          danger: true
+        });
+        if (!confirmed) {
+          event.target.value = previous;
+          return;
+        }
+      }
+      this.draft.points = this.resize(this.draft.points, next);
+      this.draft.duration_minutes = next * 60;
+      this.dirty = true;
+      this.renderProfileDialog();
     };
     this.dialog.querySelector("#recommend").onclick = async () => {
-      try { const recommended=await this._hass.callWS({type:"climate_sleep_curve/profile/recommend",duration_minutes:this.draft.duration_minutes,starting_temperature:this.draft.points[0].temperature,preference:"comfort"});this.draft.points=recommended.points;this.dirty=true;this.renderProfileDialog(); } catch(error){alert(error.message||String(error));}
+      try {
+        const recommended = await this._hass.callWS({ type: "climate_sleep_curve/profile/recommend", duration_minutes: this.draft.duration_minutes, starting_temperature: this.draft.points[0].temperature, preference: "comfort" });
+        this.draft.points = recommended.points;
+        this.dirty = true;
+        this.renderProfileDialog();
+      } catch (error) {
+        showMessage(this, errorMessage(error));
+      }
     };
     this.dialog.querySelector("#save").onclick = async () => {
-      const button=this.dialog.querySelector("#save");button.disabled=true;
-      try { this.draft.name=this.dialog.querySelector("#name").value;const saved=await this._hass.callWS({type:"climate_sleep_curve/profile/save",profile:this.draft,expected_revision:this.draft.revision});this.dirty=false;await this.refresh();if(this.returnToProfiles)this.openProfiles(saved.id);else this.dialog.close(); }
-      catch(error){button.disabled=false;alert(error.code==="revision_conflict"?t("配置已在其他页面修改。", "Configuration was modified elsewhere."):error.message||String(error));}
+      const button = this.dialog.querySelector("#save");
+      button.disabled = true;
+      try {
+        this.draft.name = this.dialog.querySelector("#name").value;
+        const saved = await this._hass.callWS({ type: "climate_sleep_curve/profile/save", profile: this.draft, expected_revision: this.draft.revision });
+        this.dirty = false;
+        await this.refresh();
+        if (this.returnToProfiles) this.openProfiles(saved.id);
+        else this.dialog.close();
+      } catch (error) {
+        button.disabled = false;
+        showMessage(this, error.code === "revision_conflict" ? t("\u914D\u7F6E\u5DF2\u5728\u5176\u4ED6\u9875\u9762\u4FEE\u6539\u3002", "Configuration was modified elsewhere.") : errorMessage(error));
+      }
     };
     this.dialog.querySelector("#duplicate").onclick = async () => {
-      const name=prompt(t("副本名称", "Copy name"),`${this.draft.name} ${t("副本", "copy")}`);if(!name)return;
-      try{const copy=await this._hass.callWS({type:"climate_sleep_curve/profile/duplicate",profile_id:this.draft.id,name});await this.refresh();if(this.returnToProfiles)this.openProfiles(copy.id);else this.dialog.close();}catch(error){alert(error.message||String(error));}
+      const name = await askText(this, { title: t("\u590D\u5236\u66F2\u7EBF", "Duplicate profile"), label: t("\u526F\u672C\u540D\u79F0", "Copy name"), value: `${this.draft.name} ${t("\u526F\u672C", "copy")}`, confirmLabel: t("\u590D\u5236", "Duplicate") });
+      if (!name) return;
+      try {
+        const copy = await this._hass.callWS({ type: "climate_sleep_curve/profile/duplicate", profile_id: this.draft.id, name });
+        await this.refresh();
+        if (this.returnToProfiles) this.openProfiles(copy.id);
+        else this.dialog.close();
+      } catch (error) {
+        showMessage(this, errorMessage(error));
+      }
     };
     this.dialog.querySelector("#delete").onclick = async () => {
-      if(!confirm(t("删除此曲线？仍被控制器使用时将拒绝删除。", "Delete this profile? Deletion is rejected while a controller uses it.")))return;
-      try{await this._hass.callWS({type:"climate_sleep_curve/profile/delete",profile_id:this.draft.id,expected_revision:this.draft.revision});await this.refresh();if(this.returnToProfiles)this.openProfiles();else this.dialog.close();}catch(error){alert(error.message||String(error));}
+      const confirmed = await askConfirmation(this, { title: t("\u5220\u9664\u66F2\u7EBF", "Delete profile"), message: t("\u4ECD\u88AB\u63A7\u5236\u5668\u4F7F\u7528\u7684\u66F2\u7EBF\u65E0\u6CD5\u5220\u9664\u3002", "A profile still used by a controller cannot be deleted."), confirmLabel: t("\u5220\u9664", "Delete"), danger: true });
+      if (!confirmed) return;
+      try {
+        await this._hass.callWS({ type: "climate_sleep_curve/profile/delete", profile_id: this.draft.id, expected_revision: this.draft.revision });
+        await this.refresh();
+        if (this.returnToProfiles) this.openProfiles();
+        else this.dialog.close();
+      } catch (error) {
+        showMessage(this, errorMessage(error));
+      }
     };
   }
-
   resize(points, hours) {
-    const result=points.filter((point)=>point.offset_minutes<hours*60).map((point)=>({...point}));const temperature=result.at(-1)?.temperature??26;
-    for(let hour=0;hour<hours;hour++)if(!result.some((point)=>point.offset_minutes===hour*60))result.push({offset_minutes:hour*60,temperature});
-    return result.sort((a,b)=>a.offset_minutes-b.offset_minutes);
+    return resizePoints(points, hours);
   }
-
   chart(points) {
-    const settings=this.chartSettings(points),{min,max,step}=settings;
-    const width=640,height=290,left=38,right=16,top=22,bottom=35,innerW=width-left-right,innerH=height-top-bottom;
-    const x=(index)=>left+(points.length===1?0:index/(points.length-1))*innerW,y=(temp)=>top+(max-temp)/(max-min)*innerH;
-    const coords=points.map((point,index)=>`${x(index)},${y(point.temperature)}`).join(" ");
-    const area=`${left},${height-bottom} ${coords} ${left+innerW},${height-bottom}`;
-    const grid=Array.from({length:5},(_,index)=>Math.round((min+(max-min)*index/4)*10)/10).map((temp)=>`<line class="grid" x1="${left}" y1="${y(temp)}" x2="${left+innerW}" y2="${y(temp)}"/><text class="axis" x="2" y="${y(temp)+4}">${temp}°</text>`).join("");
-    const labels=points.map((point,index)=>`<text class="axis" text-anchor="middle" x="${x(index)}" y="${height-10}">${index}h</text>`).join("");
-    const dots=points.map((point,index)=>`<circle class="hit" data-index="${index}" tabindex="0" role="slider" aria-label="${index} hours, ${point.temperature} degrees Celsius" aria-valuemin="${min}" aria-valuemax="${max}" aria-valuenow="${point.temperature}" cx="${x(index)}" cy="${y(point.temperature)}" r="22"/><circle class="dot" cx="${x(index)}" cy="${y(point.temperature)}" r="7" pointer-events="none"/>`).join("");
+    const settings = this.chartSettings(points), { min, max, step } = settings;
+    const width = 640, height = 290, left = 38, right = 16, top = 22, bottom = 35, innerW = width - left - right, innerH = height - top - bottom;
+    const x = (index) => left + (points.length === 1 ? 0 : index / (points.length - 1)) * innerW, y = (temp) => top + (max - temp) / (max - min) * innerH;
+    const coords = points.map((point, index) => `${x(index)},${y(point.temperature)}`).join(" ");
+    const area = `${left},${height - bottom} ${coords} ${left + innerW},${height - bottom}`;
+    const grid = Array.from({ length: 5 }, (_, index) => Math.round((min + (max - min) * index / 4) * 10) / 10).map((temp) => `<line class="grid" x1="${left}" y1="${y(temp)}" x2="${left + innerW}" y2="${y(temp)}"/><text class="axis" x="2" y="${y(temp) + 4}">${temp}\xB0</text>`).join("");
+    const labels = points.map((point, index) => `<text class="axis" text-anchor="middle" x="${x(index)}" y="${height - 10}">${index}h</text>`).join("");
+    const dots = points.map((point, index) => `<circle class="hit" data-index="${index}" tabindex="0" role="slider" aria-label="${index} hours, ${point.temperature} degrees Celsius" aria-valuemin="${min}" aria-valuemax="${max}" aria-valuenow="${point.temperature}" cx="${x(index)}" cy="${y(point.temperature)}" r="22"/><circle class="dot" cx="${x(index)}" cy="${y(point.temperature)}" r="7" pointer-events="none"/>`).join("");
     return `<svg class="chart" viewBox="0 0 ${width} ${height}" data-top="${top}" data-height="${innerH}" data-min="${min}" data-max="${max}" data-step="${step}">${grid}<polygon class="area" points="${area}"/><polyline class="curve" points="${coords}"/>${labels}${dots}</svg>`;
   }
-
   chartSettings(points) {
-    const values=points.map((point)=>point.temperature);
-    const ranges=this.entityIds(this.controller).map((entityId)=>this._hass.states[entityId]?.attributes||{}).map((attrs)=>{
-      const fahrenheit=attrs.temperature_unit==="°F",toC=(value)=>fahrenheit?(Number(value)-32)*5/9:Number(value);
-      const min=toC(attrs.min_temp),max=toC(attrs.max_temp),rawStep=Number(attrs.target_temp_step);
-      return {min,max,step:!fahrenheit&&[0.5,1].includes(rawStep)?rawStep:0.5};
+    const values = points.map((point) => point.temperature);
+    const ranges = this.entityIds(this.controller).map((entityId) => this._hass.states[entityId]?.attributes || {}).map((attrs) => {
+      const fahrenheit = attrs.temperature_unit === "\xB0F", toC = (value) => fahrenheit ? (Number(value) - 32) * 5 / 9 : Number(value);
+      const min2 = toC(attrs.min_temp), max2 = toC(attrs.max_temp), rawStep = Number(attrs.target_temp_step);
+      return { min: min2, max: max2, step: !fahrenheit && [0.5, 1].includes(rawStep) ? rawStep : 0.5 };
     });
-    const validMins=ranges.map((item)=>item.min).filter(Number.isFinite),validMaxes=ranges.map((item)=>item.max).filter(Number.isFinite);
-    let min=validMins.length?Math.max(...validMins):Math.min(16,...values);
-    let max=validMaxes.length?Math.min(...validMaxes):Math.max(30,...values);
-    if(max<=min){min=Math.min(16,...values);max=Math.max(30,...values);}
-    min=Math.floor(Math.min(min,...values));max=Math.ceil(Math.max(max,...values));
-    if(max<=min)max=min+1;
-    const step=ranges.some((item)=>item.step===1)?1:0.5;
-    return {min,max,step};
+    const validMins = ranges.map((item) => item.min).filter(Number.isFinite), validMaxes = ranges.map((item) => item.max).filter(Number.isFinite);
+    let min = validMins.length ? Math.max(...validMins) : Math.min(16, ...values);
+    let max = validMaxes.length ? Math.min(...validMaxes) : Math.max(30, ...values);
+    if (max <= min) {
+      min = Math.min(16, ...values);
+      max = Math.max(30, ...values);
+    }
+    min = Math.floor(Math.min(min, ...values));
+    max = Math.ceil(Math.max(max, ...values));
+    if (max <= min) max = min + 1;
+    const step = ranges.some((item) => item.step === 1) ? 1 : 0.5;
+    return { min, max, step };
   }
-
   bindChart() {
-    const svg=this.dialog.querySelector("svg");let active=null;
-    const update=(index,clientY,node)=>{const box=svg.getBoundingClientRect(),top=Number(svg.dataset.top),height=Number(svg.dataset.height),min=Number(svg.dataset.min),max=Number(svg.dataset.max),step=Number(svg.dataset.step),viewY=(clientY-box.top)*290/box.height;this.draft.points[index].temperature=Math.round(snap(clamp(max-(viewY-top)/height*(max-min),min,max),step,min)*10)/10;this.dirty=true;const cy=top+(max-this.draft.points[index].temperature)/(max-min)*height;node.setAttribute("cy",cy);node.nextElementSibling?.setAttribute("cy",cy);node.setAttribute("aria-valuenow",this.draft.points[index].temperature);};
-    svg.querySelectorAll(".hit").forEach((node)=>{
-      node.onpointerdown=(event)=>{active=Number(node.dataset.index);node.setPointerCapture(event.pointerId);event.preventDefault();};
-      node.onpointermove=(event)=>{if(active===Number(node.dataset.index))update(active,event.clientY,node);};node.onpointerup=()=>{active=null;this.renderProfileDialog();};
-      node.onkeydown=(event)=>{if(["ArrowUp","ArrowDown"].includes(event.key)){event.preventDefault();const index=Number(node.dataset.index),min=Number(svg.dataset.min),max=Number(svg.dataset.max),step=Number(svg.dataset.step);this.draft.points[index].temperature=Math.round(clamp(this.draft.points[index].temperature+(event.key==="ArrowUp"?step:-step),min,max)*10)/10;this.dirty=true;this.renderProfileDialog();}};
+    const svg = this.dialog.querySelector("svg");
+    let active = null;
+    const update = (index, clientY, node) => {
+      const box = svg.getBoundingClientRect(), top = Number(svg.dataset.top), height = Number(svg.dataset.height), min = Number(svg.dataset.min), max = Number(svg.dataset.max), step = Number(svg.dataset.step), viewY = (clientY - box.top) * 290 / box.height;
+      this.draft.points[index].temperature = Math.round(snap(clamp(max - (viewY - top) / height * (max - min), min, max), step, min) * 10) / 10;
+      this.dirty = true;
+      const cy = top + (max - this.draft.points[index].temperature) / (max - min) * height;
+      node.setAttribute("cy", cy);
+      node.nextElementSibling?.setAttribute("cy", cy);
+      node.setAttribute("aria-valuenow", this.draft.points[index].temperature);
+    };
+    svg.querySelectorAll(".hit").forEach((node) => {
+      node.onpointerdown = (event) => {
+        active = Number(node.dataset.index);
+        node.setPointerCapture(event.pointerId);
+        event.preventDefault();
+      };
+      node.onpointermove = (event) => {
+        if (active === Number(node.dataset.index)) update(active, event.clientY, node);
+      };
+      node.onpointerup = () => {
+        active = null;
+        this.renderProfileDialog();
+      };
+      node.onkeydown = (event) => {
+        if (["ArrowUp", "ArrowDown"].includes(event.key)) {
+          event.preventDefault();
+          const index = Number(node.dataset.index), min = Number(svg.dataset.min), max = Number(svg.dataset.max), step = Number(svg.dataset.step);
+          this.draft.points[index].temperature = Math.round(clamp(this.draft.points[index].temperature + (event.key === "ArrowUp" ? step : -step), min, max) * 10) / 10;
+          this.dirty = true;
+          this.renderProfileDialog();
+        }
+      };
     });
   }
-
-  getCardSize() { return this.config?.compact ? 2 : 3; }
-}
-
-class ClimateSleepCurveCardEditor extends HTMLElement {
-  setConfig(config) { this.config=config;this.render(); }
-  set hass(value) { this._hass=value;this.load(); }
-  async load(){if(!this._hass)return;try{this.state=await this._hass.callWS({type:"climate_sleep_curve/get_state"});}catch{}this.render();}
-  render(){if(!this.shadowRoot)this.attachShadow({mode:"open"});const controllers=this.state?.controllers||[];this.shadowRoot.innerHTML=`<style>:host{display:block;padding:8px}label{display:block;margin:12px 0 4px}select,input{width:100%;box-sizing:border-box;padding:8px}</style><label>${t("控制器","Controller")}</label><select id="controller"><option value="">—</option>${controllers.map((item)=>`<option value="${item.id}" ${item.id===this.config?.controller_id?"selected":""}>${esc(item.name)}</option>`).join("")}</select><label>${t("显示名称","Display name")}</label><input id="name" value="${esc(this.config?.name||"")}">`;
-    const changed=()=>this.dispatchEvent(new CustomEvent("config-changed",{detail:{config:{...this.config,controller_id:this.shadowRoot.querySelector("#controller").value||undefined,name:this.shadowRoot.querySelector("#name").value||undefined}},bubbles:true,composed:true}));this.shadowRoot.querySelector("#controller").onchange=changed;this.shadowRoot.querySelector("#name").onchange=changed;
+  getCardSize() {
+    return this.config?.compact ? 2 : 3;
   }
-}
-
+};
+var ClimateSleepCurveCardEditor = class extends HTMLElement {
+  setConfig(config) {
+    this.config = config;
+    this.render();
+  }
+  set hass(value) {
+    this._hass = value;
+    this.load();
+  }
+  async load() {
+    if (!this._hass) return;
+    try {
+      this.state = await this._hass.callWS({ type: "climate_sleep_curve/get_state" });
+    } catch {
+    }
+    this.render();
+  }
+  render() {
+    if (!this.shadowRoot) this.attachShadow({ mode: "open" });
+    const controllers = this.state?.controllers || [];
+    this.shadowRoot.innerHTML = `<style>:host{display:block;padding:8px}label{display:block;margin:12px 0 4px}select,input{width:100%;box-sizing:border-box;padding:8px}</style><label>${t("\u63A7\u5236\u5668", "Controller")}</label><select id="controller"><option value="">\u2014</option>${controllers.map((item) => `<option value="${item.id}" ${item.id === this.config?.controller_id ? "selected" : ""}>${esc(item.name)}</option>`).join("")}</select><label>${t("\u663E\u793A\u540D\u79F0", "Display name")}</label><input id="name" value="${esc(this.config?.name || "")}">`;
+    const changed = () => this.dispatchEvent(new CustomEvent("config-changed", { detail: { config: { ...this.config, controller_id: this.shadowRoot.querySelector("#controller").value || void 0, name: this.shadowRoot.querySelector("#name").value || void 0 } }, bubbles: true, composed: true }));
+    this.shadowRoot.querySelector("#controller").onchange = changed;
+    this.shadowRoot.querySelector("#name").onchange = changed;
+  }
+};
 customElements.define("climate-sleep-curve-card", ClimateSleepCurveCard);
 customElements.define("climate-sleep-curve-card-editor", ClimateSleepCurveCardEditor);
 window.customCards = window.customCards || [];
-window.customCards.push({type:"climate-sleep-curve-card",name:"Climate Sleep Curve",description:t("可视化空调睡眠温度曲线","Visual sleep temperature curves for climate entities"),preview:true});
+window.customCards.push({ type: "climate-sleep-curve-card", name: "Climate Sleep Curve", description: t("\u53EF\u89C6\u5316\u7A7A\u8C03\u7761\u7720\u6E29\u5EA6\u66F2\u7EBF", "Visual sleep temperature curves for climate entities"), preview: true });
