@@ -50,13 +50,13 @@ Climate Sleep Curve Card 是 [Climate Sleep Curve](http://172.20.0.3:3000/egglea
 3. 添加以下资源地址：
 
    ```text
-   /local/climate-sleep-curve-card.js?v=0.2.0
+   /local/climate-sleep-curve-card.js?v=0.2.1
    ```
 
 4. 资源类型选择 **JavaScript 模块**。
 5. 刷新浏览器页面。
 
-`/config/www/` 会映射为 `/local/`。升级文件后可以修改查询参数，例如从 `v=0.1.0` 改为 `v=0.2.0`，以绕过浏览器缓存。
+`/config/www/` 会映射为 `/local/`。升级文件后可以修改查询参数，例如从 `v=0.2.0` 改为 `v=0.2.1`，以绕过浏览器缓存。
 
 ## 添加卡片
 
@@ -260,4 +260,4 @@ npm run check
 
 ## 版本与许可证
 
-当前版本为 `0.2.0`，采用 [MIT License](LICENSE)。多空调功能需要 Climate Sleep Curve 后端 `0.2.0` 或更高版本。
+当前版本为 `0.2.1`，采用 [MIT License](LICENSE)。多空调功能需要 Climate Sleep Curve 后端 `0.2.0` 或更高版本。

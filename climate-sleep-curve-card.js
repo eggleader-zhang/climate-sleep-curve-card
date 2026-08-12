@@ -22,7 +22,10 @@ class ClimateSleepCurveCard extends HTMLElement {
     this.load();
   }
 
-  disconnectedCallback() { if (this._unsubscribe) this._unsubscribe(); }
+  disconnectedCallback() {
+    if (this._unsubscribe) this._unsubscribe();
+    this._unsubscribe = undefined;
+  }
 
   async load() {
     if (!this._hass || this._loading) return;
@@ -31,7 +34,7 @@ class ClimateSleepCurveCard extends HTMLElement {
       this.state = await this._hass.callWS({type: "climate_sleep_curve/get_state"});
       this.error = null;
       if (!this._unsubscribe) {
-        this._unsubscribe = await this._hass.connection.subscribeMessage(() => this.refresh(), {type: "climate_sleep_curve/subscribe"});
+        this._unsubscribe = await this._hass.connection.subscribeMessage(() => { void this.refresh(); }, {type: "climate_sleep_curve/subscribe"});
       }
     } catch (error) {
       this.error = t("尚未安装或加载 Climate Sleep Curve 后端集成。", "Climate Sleep Curve backend is not installed or loaded.");
@@ -42,9 +45,26 @@ class ClimateSleepCurveCard extends HTMLElement {
     }
   }
 
-  async refresh() {
-    this.state = await this._hass.callWS({type: "climate_sleep_curve/get_state"});
-    if (!this.dialog?.open) this.render();
+  refresh() {
+    if (this._refreshPromise) {
+      this._refreshQueued = true;
+      return this._refreshPromise;
+    }
+    this._refreshPromise = (async () => {
+      try {
+        do {
+          this._refreshQueued = false;
+          this.state = await this._hass.callWS({type: "climate_sleep_curve/get_state"});
+        } while (this._refreshQueued);
+        this.error = null;
+      } catch (error) {
+        this.error = t("无法刷新 Climate Sleep Curve 状态。", "Unable to refresh Climate Sleep Curve state.");
+      } finally {
+        this._refreshPromise = undefined;
+        if (!this.dialog?.open) this.render();
+      }
+    })();
+    return this._refreshPromise;
   }
 
   get controller() {
@@ -56,6 +76,11 @@ class ClimateSleepCurveCard extends HTMLElement {
   get session() { return this.state?.active_sessions.find((item) => item.controller_id === this.controller?.id); }
 
   entityIds(item) { return item?.climate_entity_ids || (item?.climate_entity_id ? [item.climate_entity_id] : []); }
+
+  normalizeTime(value) {
+    const match = /^([01]\d|2[0-3]):([0-5]\d)(?::([0-5]\d))?$/.exec(String(value || ""));
+    return match ? `${match[1]}:${match[2]}:${match[3] || "00"}` : null;
+  }
 
   setupSelector(selector, config, value) {
     const element = this.dialog.querySelector(selector);
@@ -126,11 +151,13 @@ class ClimateSleepCurveCard extends HTMLElement {
   openSetup() {
     this.dialog.innerHTML = `<div class="editor"><div class="title">${t("创建睡眠曲线", "Create sleep curve")}</div><label>${t("曲线名称", "Profile name")}</label><input class="field" id="pname" value="${t("默认睡眠曲线", "Default sleep curve")}"><label>${t("控制器名称", "Controller name")}</label><input class="field" id="cname" value="${t("卧室睡眠曲线", "Bedroom sleep curve")}"><label>${t("空调实体（可多选）", "Climate entities (multiple allowed)")}</label><ha-selector id="entities"></ha-selector><div class="actions"><button id="save">${t("创建", "Create")}</button><button class="secondary" id="cancel">${t("取消", "Cancel")}</button></div></div>`;
     this.dialog.showModal();
-    const entitySelector = this.setupSelector("#entities", {entity:{domain:"climate",multiple:true}}, []);
+    const entitySelector = this.setupSelector("#entities", {entity:{filter:{domain:"climate"},multiple:true}}, []);
     this.dialog.querySelector("#cancel").onclick = () => this.dialog.close();
     this.dialog.querySelector("#save").onclick = async () => {
       const entityIds = Array.isArray(entitySelector.value) ? entitySelector.value : (entitySelector.value ? [entitySelector.value] : []);
       if (!entityIds.length) return alert(t("请至少选择一个 climate 实体", "Select at least one climate entity"));
+      const button = this.dialog.querySelector("#save");
+      button.disabled = true;
       let profile = null;
       try {
         profile = await this._hass.callWS({type:"climate_sleep_curve/profile/save", profile:{name:this.dialog.querySelector("#pname").value,duration_minutes:480,interpolation:"step",points:[26.5,26.5,27,27.5,28,28,27.5,27].map((temperature,index)=>({offset_minutes:index*60,temperature}))}, expected_revision:null});
@@ -140,6 +167,7 @@ class ClimateSleepCurveCard extends HTMLElement {
         if (profile) {
           try { await this._hass.callWS({type:"climate_sleep_curve/profile/delete",profile_id:profile.id,expected_revision:profile.revision}); } catch {}
         }
+        button.disabled = false;
         alert(error.message || String(error));
       }
     };
@@ -151,8 +179,8 @@ class ClimateSleepCurveCard extends HTMLElement {
     const weekdayLabels = [t("周一","Mon"),t("周二","Tue"),t("周三","Wed"),t("周四","Thu"),t("周五","Fri"),t("周六","Sat"),t("周日","Sun")];
     this.dialog.innerHTML = `<div class="editor"><div class="title">${t("控制器设置", "Controller settings")}</div><label>${t("名称", "Name")}</label><input class="field" id="name" value="${esc(controller.name)}"><label>${t("空调实体（可多选）", "Climate entities (multiple allowed)")}</label><ha-selector id="entities"></ha-selector><label>${t("下次会话使用的曲线", "Profile for the next session")}</label><select id="profile">${profiles.map((profile)=>`<option ${profile.id===controller.profile_id?"selected":""} value="${profile.id}">${esc(profile.name)}</option>`).join("")}</select><div class="setting-row"><ha-switch id="automatic"></ha-switch><label for="automatic">${t("每天自动启动", "Start automatically")}</label></div><label>${t("启动时间", "Start time")}</label><ha-selector id="time"></ha-selector><label>${t("生效日期", "Active weekdays")}</label><div class="weekdays">${weekdayLabels.map((label,index)=>`<label class="weekday"><ha-checkbox data-day="${index}"></ha-checkbox><span>${label}</span></label>`).join("")}</div><div class="actions"><button id="save">${t("保存", "Save")}</button><button class="secondary" id="cancel">${t("取消", "Cancel")}</button><button class="danger" id="delete">${t("删除控制器", "Delete controller")}</button></div></div>`;
     this.dialog.showModal();
-    const entitySelector = this.setupSelector("#entities", {entity:{domain:"climate",multiple:true}}, this.entityIds(controller));
-    const timeSelector = this.setupSelector("#time", {time:{}}, auto.time);
+    const entitySelector = this.setupSelector("#entities", {entity:{filter:{domain:"climate"},multiple:true}}, this.entityIds(controller));
+    const timeSelector = this.setupSelector("#time", {time:{no_second:true}}, auto.time);
     this.dialog.querySelector("#automatic").checked = auto.enabled;
     this.dialog.querySelectorAll("ha-checkbox[data-day]").forEach((checkbox) => { checkbox.checked=auto.weekdays.includes(Number(checkbox.dataset.day)); });
     this.dialog.querySelector("#cancel").onclick = () => this.dialog.close();
@@ -160,11 +188,15 @@ class ClimateSleepCurveCard extends HTMLElement {
       try {
         const entityIds = Array.isArray(entitySelector.value) ? entitySelector.value : (entitySelector.value ? [entitySelector.value] : []);
         if (!entityIds.length) return alert(t("请至少选择一个 climate 实体", "Select at least one climate entity"));
-        const time = timeSelector.value || "23:00:00";
+        const time = this.normalizeTime(timeSelector.value);
+        if (!time) return alert(t("请选择有效的启动时间", "Select a valid start time"));
         const weekdays = [...this.dialog.querySelectorAll("ha-checkbox[data-day]")].filter((item)=>item.checked).map((item)=>Number(item.dataset.day));
-        await this._hass.callWS({type:"climate_sleep_curve/controller/save",controller:{...controller,name:this.dialog.querySelector("#name").value,climate_entity_ids:entityIds,climate_entity_id:entityIds[0],profile_id:this.dialog.querySelector("#profile").value,automatic_start:{enabled:this.dialog.querySelector("#automatic").checked,time:time.length===5?`${time}:00`:time,weekdays}},expected_revision:controller.revision});
+        if (this.dialog.querySelector("#automatic").checked && !weekdays.length) return alert(t("请至少勾选一个生效星期", "Select at least one active weekday"));
+        const button = this.dialog.querySelector("#save");
+        button.disabled = true;
+        await this._hass.callWS({type:"climate_sleep_curve/controller/save",controller:{...controller,name:this.dialog.querySelector("#name").value,climate_entity_ids:entityIds,climate_entity_id:entityIds[0],profile_id:this.dialog.querySelector("#profile").value,automatic_start:{enabled:this.dialog.querySelector("#automatic").checked,time,weekdays}},expected_revision:controller.revision});
         this.dialog.close(); await this.refresh();
-      } catch(error) { alert(error.message || String(error)); }
+      } catch(error) { const button=this.dialog.querySelector("#save");if(button)button.disabled=false;alert(error.message || String(error)); }
     };
     this.dialog.querySelector("#delete").onclick = async () => {
       if (!confirm(t("删除此控制器？运行中的会话会停止，但不会关闭空调。", "Delete this controller? Its session will stop without turning off the climate device."))) return;

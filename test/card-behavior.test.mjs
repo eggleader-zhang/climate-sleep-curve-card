@@ -1,0 +1,56 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+
+const registry = new Map();
+globalThis.HTMLElement = class {};
+globalThis.customElements = {
+  define(name, constructor) { registry.set(name, constructor); },
+  get(name) { return registry.get(name); },
+};
+Object.defineProperty(globalThis, "navigator", {value: {language: "en"}, configurable: true});
+globalThis.window = {customCards: []};
+
+await import("../climate-sleep-curve-card.js");
+const Card = customElements.get("climate-sleep-curve-card");
+
+test("disconnect releases the subscription for a later reconnect", () => {
+  const card = new Card();
+  let unsubscribed = 0;
+  card._unsubscribe = () => { unsubscribed += 1; };
+
+  card.disconnectedCallback();
+
+  assert.equal(unsubscribed, 1);
+  assert.equal(card._unsubscribe, undefined);
+});
+
+test("queued refreshes are serialized and keep the newest state", async () => {
+  const card = new Card();
+  let calls = 0;
+  let releaseFirst;
+  card._hass = {
+    callWS: async () => {
+      calls += 1;
+      if (calls === 1) await new Promise((resolve) => { releaseFirst = resolve; });
+      return {schema_version: calls};
+    },
+  };
+  card.render = () => {};
+
+  const first = card.refresh();
+  const second = card.refresh();
+  releaseFirst();
+  await Promise.all([first, second]);
+
+  assert.equal(calls, 2);
+  assert.equal(card.state.schema_version, 2);
+});
+
+test("automatic start time is validated and normalized", () => {
+  const card = new Card();
+
+  assert.equal(card.normalizeTime("23:15"), "23:15:00");
+  assert.equal(card.normalizeTime("08:04:09"), "08:04:09");
+  assert.equal(card.normalizeTime("24:00"), null);
+  assert.equal(card.normalizeTime(undefined), null);
+});
