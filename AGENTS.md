@@ -4,7 +4,7 @@
 
 ## 项目定位
 
-这是 Climate Sleep Curve 后端集成的 Home Assistant Lovelace 卡片。它负责展示状态、编辑曲线和控制器，以及通过已认证 WebSocket API 请求启动或停止会话。
+这是 Climate Sleep Curve 后端集成的 Home Assistant Lovelace 卡片。它负责展示状态、编辑温度与风量曲线和控制器，以及通过已认证 WebSocket API 请求启动或停止会话。
 
 卡片不是设备控制器。设备服务、安全检查、持久化和调度属于独立的 `climate-sleep-curve` 后端仓库。
 
@@ -24,7 +24,7 @@
 - `climate-sleep-curve-card.js`：由 `src/card.mjs` 打包生成的发布文件，是 HACS `filename` 指向的安装产物；不要直接编辑。
 - `src/card.mjs`：卡片与编辑器的主运行时源码。
 - `src/ui-helpers.mjs`：Home Assistant 风格消息、输入和确认交互，以及执行结果展示元数据。
-- `src/curve-utils.mjs`：温度吸附、时长调整和推荐曲线等可独立测试算法。
+- `src/curve-utils.mjs`：温度吸附、时长调整、风速节点继承和推荐曲线等可独立测试算法。
 - `test/`：使用 Node 内置测试运行器的算法和卡片行为测试。
 - `package.json`：版本与校验脚本。
 - `hacs.json`：HACS Dashboard Plugin 元数据。
@@ -107,6 +107,8 @@
 - 当前界面按每小时一个节点编辑，第一个节点为 0 小时。
 - 缩短时长删除尾部节点前必须确认。
 - 延长时长使用最后一个温度填充新增节点。
+- 风速控制支持 `none`、`auto` 和 `curve`；风量曲线只提供控制器全部目标实体共同支持的 `fan_modes`。
+- 延长风量曲线时使用最后一个风速填充新增节点。
 - 鼠标、触摸和键盘修改应使用相同的裁剪和步进逻辑。
 - 图表范围参考控制器所有目标实体的 `min_temp`、`max_temp` 和 `target_temp_step`；实际执行仍由后端对每台设备独立换算、裁剪和吸附。
 - 内部和 WebSocket payload 使用摄氏温度；华氏设备属性仅用于转换编辑范围。
@@ -151,6 +153,7 @@ git diff --check
 - 延长和缩短曲线。
 - 推荐曲线长度、端点和确定性。
 - 华氏属性换算以及缺失/无效实体属性。
+- 多实体共同风速交集和延长曲线时的风速继承。
 
 UI 或协议变更还应在真实 Home Assistant 中手动验证：
 

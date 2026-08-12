@@ -75,6 +75,24 @@ class ClimateSleepCurveCard extends HTMLElement {
 
   entityIds(item) { return item?.climate_entity_ids || (item?.climate_entity_id ? [item.climate_entity_id] : []); }
 
+  commonFanModes() {
+    const lists = this.entityIds(this.controller)
+      .map((entityId) => this._hass.states[entityId]?.attributes?.fan_modes)
+      .filter((modes) => Array.isArray(modes))
+      .map((modes) => modes.filter((mode) => typeof mode === "string" && mode.length));
+    if (!lists.length || lists.length !== this.entityIds(this.controller).length) return [];
+    return [...new Set(lists[0])].filter((mode) => lists.every((modes) => modes.includes(mode)));
+  }
+
+  fanModeLabel(mode) {
+    const labels = {
+      auto: t("自动", "Auto"), low: t("低", "Low"), medium: t("中", "Medium"),
+      middle: t("中", "Middle"), high: t("高", "High"), quiet: t("静音", "Quiet"),
+      silent: t("静音", "Silent"), turbo: t("强劲", "Turbo"), diffuse: t("柔风", "Diffuse"),
+    };
+    return labels[String(mode).toLowerCase()] || mode;
+  }
+
   entityResult(session, entityId) {
     return session?.last_entity_results?.find((item) => item.entity_id === entityId);
   }
@@ -104,6 +122,7 @@ class ClimateSleepCurveCard extends HTMLElement {
       label{display:block;margin:14px 0 5px}.field,select{box-sizing:border-box;width:100%;padding:10px;border:1px solid var(--divider-color);border-radius:8px;background:var(--card-background-color);color:var(--primary-text-color)}
       ha-selector,ha-textfield,ha-alert{display:block}.setting-row{display:flex;align-items:center;gap:10px;margin-top:18px}.setting-row label{margin:0}.weekdays{display:grid;grid-template-columns:repeat(7,minmax(58px,1fr));gap:6px}.weekday{display:flex;align-items:center;justify-content:center;gap:2px;margin:0;padding:7px 3px;border:1px solid var(--divider-color);border-radius:10px;cursor:pointer}.entity-list{display:grid;gap:5px;margin:12px 0}.entity-state{display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:9px;background:color-mix(in srgb,var(--primary-color) 5%,transparent)}.entity-main{flex:1;min-width:0}.result{display:inline-flex;align-items:center;gap:4px;padding:3px 7px;border-radius:12px;font-size:12px;white-space:nowrap}.result ha-icon{--mdc-icon-size:16px}.result.success{color:var(--success-color);background:color-mix(in srgb,var(--success-color) 12%,transparent)}.result.warning{color:var(--warning-color);background:color-mix(in srgb,var(--warning-color) 12%,transparent)}.result.error{color:var(--error-color);background:color-mix(in srgb,var(--error-color) 12%,transparent)}.result.neutral{color:var(--secondary-text-color);background:var(--divider-color)}
       .chart{touch-action:none;width:100%;height:auto;background:color-mix(in srgb,var(--primary-color) 5%,transparent);border-radius:12px}.grid{stroke:var(--divider-color);stroke-width:1}.curve{fill:none;stroke:var(--primary-color);stroke-width:3}.area{fill:color-mix(in srgb,var(--primary-color) 18%,transparent)}.dot{fill:var(--primary-color);stroke:var(--card-background-color);stroke-width:3;cursor:ns-resize}.hit{fill:transparent;cursor:ns-resize}.axis{fill:var(--secondary-text-color);font-size:11px}.bubble{fill:var(--card-background-color);stroke:var(--primary-color)}
+      .fan-curve{display:grid;grid-template-columns:repeat(auto-fit,minmax(105px,1fr));gap:8px;margin-top:8px}.fan-point{padding:8px;border:1px solid var(--divider-color);border-radius:10px;background:color-mix(in srgb,var(--primary-color) 4%,transparent)}.fan-point label{margin:0 0 5px;font-size:12px;color:var(--secondary-text-color)}.fan-point select{padding:7px}
       .notice{padding:12px;border-radius:8px;background:color-mix(in srgb,var(--error-color) 12%,transparent);color:var(--error-color)}@media(max-width:520px){ha-card{padding:16px}.editor{padding:14px}.title{font-size:18px}.weekdays{grid-template-columns:repeat(4,1fr)}}
     </style>`;
     if (this.error) { this.shadowRoot.innerHTML = `${style}<ha-card><div class="notice">${esc(this.error)}</div></ha-card>`; return; }
@@ -129,9 +148,9 @@ class ClimateSleepCurveCard extends HTMLElement {
     }
     this.shadowRoot.innerHTML = `${style}<ha-card>
       <div class="row between"><div><div class="title">${esc(this.config.name || this.controller.name)}</div><div class="muted">${esc(session?.profile_snapshot?.name || profile?.name || t("曲线不存在", "Missing profile"))}</div></div><ha-icon icon="mdi:sleep"></ha-icon></div>
-      ${this.config.show_climate_state ? `<div class="entity-list">${entityIds.map((entityId) => { const climate=this._hass.states[entityId],result=this.entityResult(session,entityId),meta=resultMeta(result?.result); return `<div class="entity-state"><div class="entity-main">${esc(climate?.attributes?.friendly_name || entityId)} · ${esc(climate?.state || "unknown")}${climate?.attributes?.temperature != null ? ` · ${esc(climate.attributes.temperature)}°` : ""}<div class="muted">${esc(entityId)}</div></div>${result ? `<span class="result ${meta.tone}" title="${esc(result.error || "")}"><ha-icon icon="${meta.icon}"></ha-icon>${esc(meta.label)}</span>` : ""}</div>`; }).join("")}</div>` : ""}
+      ${this.config.show_climate_state ? `<div class="entity-list">${entityIds.map((entityId) => { const climate=this._hass.states[entityId],result=this.entityResult(session,entityId),meta=resultMeta(result?.result); return `<div class="entity-state"><div class="entity-main">${esc(climate?.attributes?.friendly_name || entityId)} · ${esc(climate?.state || "unknown")}${climate?.attributes?.temperature != null ? ` · ${esc(climate.attributes.temperature)}°` : ""}${climate?.attributes?.fan_mode ? ` · ${t("风速", "Fan")} ${esc(this.fanModeLabel(climate.attributes.fan_mode))}` : ""}<div class="muted">${esc(entityId)}</div></div>${result ? `<span class="result ${meta.tone}" title="${esc(result.error || "")}"><ha-icon icon="${meta.icon}"></ha-icon>${esc(meta.label)}</span>` : ""}</div>`; }).join("")}</div>` : ""}
       <div class="progress"><i style="width:${progress}%"></i></div>
-      <div class="row between"><span>${session ? t("运行中", "Running") : t("未运行", "Idle")}</span>${this.config.show_next_point && session ? `<span class="muted">${t("下一节点", "Next")}: ${next ? `${nextTime} · ${next.temperature}°C` : t("等待结束", "finishing")}</span>` : ""}</div>
+      <div class="row between"><span>${session ? t("运行中", "Running") : t("未运行", "Idle")}</span>${this.config.show_next_point && session ? `<span class="muted">${t("下一节点", "Next")}: ${next ? `${nextTime} · ${next.temperature}°C${session.profile_snapshot?.fan_mode_control === "auto" ? ` · ${t("自动风", "Auto fan")}` : session.profile_snapshot?.fan_mode_control === "curve" && next.fan_mode ? ` · ${t("风速", "Fan")} ${esc(this.fanModeLabel(next.fan_mode))}` : ""}` : t("等待结束", "finishing")}</span>` : ""}</div>
       <div class="actions">${session ? `<button class="danger" id="stop">${t("停止", "Stop")}</button><button class="secondary" id="restart">${t("重新开始", "Restart")}</button>` : `<button id="start">${t("启动曲线", "Start curve")}</button>`}<button class="secondary" id="profiles">${t("曲线管理", "Profiles")}</button><button class="secondary" id="settings">${t("控制器", "Controller")}</button></div>
       <dialog id="dialog"></dialog>
     </ha-card>`;
@@ -162,7 +181,7 @@ class ClimateSleepCurveCard extends HTMLElement {
       button.disabled = true;
       let profile = null;
       try {
-        profile = await this._hass.callWS({type:"climate_sleep_curve/profile/save", profile:{name:this.dialog.querySelector("#pname").value,duration_minutes:480,interpolation:"step",points:[26.5,26.5,27,27.5,28,28,27.5,27].map((temperature,index)=>({offset_minutes:index*60,temperature}))}, expected_revision:null});
+        profile = await this._hass.callWS({type:"climate_sleep_curve/profile/save", profile:{name:this.dialog.querySelector("#pname").value,duration_minutes:480,interpolation:"step",fan_mode_control:"none",points:[26.5,26.5,27,27.5,28,28,27.5,27].map((temperature,index)=>({offset_minutes:index*60,temperature}))}, expected_revision:null});
         const controller = await this._hass.callWS({type:"climate_sleep_curve/controller/save",controller:{name:this.dialog.querySelector("#cname").value,climate_entity_ids:entityIds,profile_id:profile.id,enabled:true,automatic_start:{enabled:false,time:"23:00:00",weekdays:[0,1,2,3,4,5,6]}},expected_revision:null});
         this.config.controller_id = controller.id; this.dialog.close(); await this.refresh();
       } catch (error) {
@@ -250,7 +269,7 @@ class ClimateSleepCurveCard extends HTMLElement {
     try {
       const profile = await this._hass.callWS({
         type:"climate_sleep_curve/profile/save",
-        profile:{name,duration_minutes:480,interpolation:"step",points:[26.5,26.5,27,27.5,28,28,27.5,27].map((temperature,index)=>({offset_minutes:index*60,temperature}))},
+        profile:{name,duration_minutes:480,interpolation:"step",fan_mode_control:"none",points:[26.5,26.5,27,27.5,28,28,27.5,27].map((temperature,index)=>({offset_minutes:index*60,temperature}))},
         expected_revision:null,
       });
       await this.refresh();
@@ -270,7 +289,16 @@ class ClimateSleepCurveCard extends HTMLElement {
 
   renderProfileDialog() {
     const draft = this.draft, hours = draft.duration_minutes / 60;
-    this.dialog.innerHTML = `<div class="editor"><div class="row between"><div class="title">${t("编辑温度曲线", "Edit temperature curve")}</div><button class="secondary" id="close">${t("返回", "Back")}</button></div><label>${t("名称", "Name")}</label><input class="field" id="name" maxlength="64" value="${esc(draft.name)}"><label>${t("时长", "Duration")}: <b>${hours}h</b></label><input id="duration" type="range" min="4" max="12" step="1" value="${hours}" style="width:100%"><div class="row between"><label>${t("温度曲线", "Temperature curve")}</label><button class="secondary" id="recommend">${t("推荐曲线", "Recommend")}</button></div>${this.chart(draft.points)}<p class="muted">${t("拖动节点或使用方向键调整。后台只在离散节点调温。", "Drag a point or use arrow keys. The backend adjusts only at discrete points.")}</p><div class="actions"><button id="save">${t("保存", "Save")}</button><button class="secondary" id="duplicate">${t("复制", "Duplicate")}</button><button class="secondary" id="cancel">${t("取消", "Cancel")}</button><button class="danger" id="delete">${t("删除", "Delete")}</button></div></div>`;
+    const commonFanModes = this.commonFanModes();
+    const savedFanModes = draft.points.map((point) => point.fan_mode).filter(Boolean);
+    const selectableFanModes = [...new Set([...commonFanModes, ...savedFanModes])];
+    const fanControl = draft.fan_mode_control || "none";
+    const defaultFanMode = commonFanModes.includes("auto") ? "auto" : commonFanModes[0];
+    const fanCurve = fanControl === "curve" ? `<div class="fan-curve">${draft.points.map((point,index)=>`<div class="fan-point"><label>${index}h</label><select data-fan-index="${index}">${selectableFanModes.map((mode)=>`<option value="${esc(mode)}" ${mode===point.fan_mode?"selected":""}>${esc(this.fanModeLabel(mode))}</option>`).join("")}</select></div>`).join("")}</div>` : "";
+    const fanHint = commonFanModes.length
+      ? t("风速名称来自当前控制器所选空调共同支持的模式。", "Fan modes are shared by every climate entity in the current controller.")
+      : t("当前所选空调没有共同的风速模式，只能选择不控制风速。", "The selected climate entities have no common fan mode, so fan control is unavailable.");
+    this.dialog.innerHTML = `<div class="editor"><div class="row between"><div class="title">${t("编辑睡眠曲线", "Edit sleep curve")}</div><button class="secondary" id="close">${t("返回", "Back")}</button></div><label>${t("名称", "Name")}</label><input class="field" id="name" maxlength="64" value="${esc(draft.name)}"><label>${t("时长", "Duration")}: <b>${hours}h</b></label><input id="duration" type="range" min="4" max="12" step="1" value="${hours}" style="width:100%"><div class="row between"><label>${t("温度曲线", "Temperature curve")}</label><button class="secondary" id="recommend">${t("推荐曲线", "Recommend")}</button></div>${this.chart(draft.points)}<p class="muted">${t("拖动节点或使用方向键调整。后台只在离散节点执行。", "Drag a point or use arrow keys. The backend acts only at discrete points.")}</p><label>${t("风速控制", "Fan control")}</label><select id="fan-control"><option value="none" ${fanControl==="none"?"selected":""}>${t("不控制风速", "Do not control fan")}</option><option value="auto" ${fanControl==="auto"?"selected":""} ${!commonFanModes.includes("auto")&&fanControl!=="auto"?"disabled":""}>${t("全程自动风", "Automatic fan throughout")}</option><option value="curve" ${fanControl==="curve"?"selected":""} ${!commonFanModes.length&&fanControl!=="curve"?"disabled":""}>${t("风量曲线", "Fan curve")}</option></select><p class="muted">${fanHint}</p>${fanCurve}<div class="actions"><button id="save">${t("保存", "Save")}</button><button class="secondary" id="duplicate">${t("复制", "Duplicate")}</button><button class="secondary" id="cancel">${t("取消", "Cancel")}</button><button class="danger" id="delete">${t("删除", "Delete")}</button></div></div>`;
     this.bindChart();
     const closeEditor = async () => {
       if (this.dirty) {
@@ -286,6 +314,22 @@ class ClimateSleepCurveCard extends HTMLElement {
     };
     this.dialog.querySelector("#close").onclick = this.dialog.querySelector("#cancel").onclick = closeEditor;
     this.dialog.querySelector("#name").oninput = (event) => { this.draft.name=event.target.value;this.dirty=true; };
+    this.dialog.querySelector("#fan-control").onchange = (event) => {
+      this.draft.fan_mode_control = event.target.value;
+      if (event.target.value === "curve") {
+        this.draft.points.forEach((point) => { point.fan_mode ||= defaultFanMode; });
+      } else {
+        this.draft.points.forEach((point) => { delete point.fan_mode; });
+      }
+      this.dirty = true;
+      this.renderProfileDialog();
+    };
+    this.dialog.querySelectorAll("select[data-fan-index]").forEach((select) => {
+      select.onchange = (event) => {
+        this.draft.points[Number(event.target.dataset.fanIndex)].fan_mode = event.target.value;
+        this.dirty = true;
+      };
+    });
     this.dialog.querySelector("#duration").onchange = async (event) => {
       const next = Number(event.target.value), previous = this.draft.duration_minutes / 60;
       if (next < previous) {
@@ -300,7 +344,17 @@ class ClimateSleepCurveCard extends HTMLElement {
       this.draft.points=this.resize(this.draft.points,next);this.draft.duration_minutes=next*60;this.dirty=true;this.renderProfileDialog();
     };
     this.dialog.querySelector("#recommend").onclick = async () => {
-      try { const recommended=await this._hass.callWS({type:"climate_sleep_curve/profile/recommend",duration_minutes:this.draft.duration_minutes,starting_temperature:this.draft.points[0].temperature,preference:"comfort"});this.draft.points=recommended.points;this.dirty=true;this.renderProfileDialog(); } catch(error){showMessage(this, errorMessage(error));}
+      try {
+        const previousPoints = this.draft.points;
+        const recommended=await this._hass.callWS({type:"climate_sleep_curve/profile/recommend",duration_minutes:this.draft.duration_minutes,starting_temperature:this.draft.points[0].temperature,preference:"comfort"});
+        this.draft.points=recommended.points.map((point,index)=>({
+          ...point,
+          ...(this.draft.fan_mode_control === "curve"
+            ? {fan_mode: previousPoints[index]?.fan_mode || defaultFanMode}
+            : {}),
+        }));
+        this.dirty=true;this.renderProfileDialog();
+      } catch(error){showMessage(this, errorMessage(error));}
     };
     this.dialog.querySelector("#save").onclick = async () => {
       const button=this.dialog.querySelector("#save");button.disabled=true;
@@ -376,4 +430,4 @@ class ClimateSleepCurveCardEditor extends HTMLElement {
 customElements.define("climate-sleep-curve-card", ClimateSleepCurveCard);
 customElements.define("climate-sleep-curve-card-editor", ClimateSleepCurveCardEditor);
 window.customCards = window.customCards || [];
-window.customCards.push({type:"climate-sleep-curve-card",name:"Climate Sleep Curve",description:t("可视化空调睡眠温度曲线","Visual sleep temperature curves for climate entities"),preview:true});
+window.customCards.push({type:"climate-sleep-curve-card",name:"Climate Sleep Curve",description:t("可视化空调睡眠温度与风量曲线","Visual sleep temperature and fan curves for climate entities"),preview:true});

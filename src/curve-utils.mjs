@@ -4,9 +4,14 @@ export const snap = (value, step, min = 0) => Math.round((value - min) / step) *
 export function resizePoints(points, hours) {
   const result = points.filter((point) => point.offset_minutes < hours * 60).map((point) => ({...point}));
   const lastTemperature = result.at(-1)?.temperature ?? 26;
+  const lastFanMode = result.at(-1)?.fan_mode;
   for (let hour = 0; hour < hours; hour += 1) {
     if (!result.some((point) => point.offset_minutes === hour * 60)) {
-      result.push({offset_minutes: hour * 60, temperature: lastTemperature});
+      result.push({
+        offset_minutes: hour * 60,
+        temperature: lastTemperature,
+        ...(lastFanMode ? {fan_mode: lastFanMode} : {}),
+      });
     }
   }
   return result.sort((a, b) => a.offset_minutes - b.offset_minutes);

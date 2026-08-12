@@ -14,8 +14,11 @@ export function resultMeta(result) {
     skipped_off: [t("设备已关闭", "Device off"), "warning", "mdi:power"],
     skipped_unavailable: [t("设备不可用", "Unavailable"), "warning", "mdi:cloud-off-outline"],
     skipped_unknown: [t("状态未知", "Unknown"), "warning", "mdi:help-circle-outline"],
+    skipped_unsupported: [t("风速不支持", "Fan unsupported"), "warning", "mdi:fan-off"],
+    skipped_mixed: [t("部分已跳过", "Skipped"), "warning", "mdi:skip-next-circle-outline"],
     skipped_off_after_failure: [t("失败后关闭", "Off after failure"), "warning", "mdi:power"],
     failed: [t("执行失败", "Failed"), "error", "mdi:alert-circle"],
+    partial_failure: [t("部分失败", "Partial failure"), "error", "mdi:alert-circle-outline"],
   };
   const [label, tone, icon] = values[result] || [result || t("等待执行", "Pending"), "neutral", "mdi:clock-outline"];
   return {label, tone, icon};

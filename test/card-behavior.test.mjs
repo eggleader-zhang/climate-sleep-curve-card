@@ -60,7 +60,26 @@ test("automatic start time is validated and normalized", () => {
 test("per-entity execution outcomes have readable presentation metadata", () => {
   assert.deepEqual(resultMeta("applied"), {label: "Applied", tone: "success", icon: "mdi:check-circle"});
   assert.equal(resultMeta("failed").tone, "error");
+  assert.equal(resultMeta("partial_failure").tone, "error");
   assert.equal(resultMeta("skipped_off").tone, "warning");
+  assert.equal(resultMeta("skipped_unsupported").tone, "warning");
+});
+
+test("fan curve only offers modes shared by every selected climate entity", () => {
+  const card = new Card();
+  card.config = {controller_id: "controller"};
+  card.state = {
+    controllers: [{
+      id: "controller",
+      climate_entity_ids: ["climate.bedroom", "climate.study"],
+    }],
+  };
+  card._hass = {states: {
+    "climate.bedroom": {attributes: {fan_modes: ["auto", "low", "high"]}},
+    "climate.study": {attributes: {fan_modes: ["auto", "low"]}},
+  }};
+
+  assert.deepEqual(card.commonFanModes(), ["auto", "low"]);
 });
 
 test("source uses non-blocking in-card dialogs instead of browser dialogs", async () => {

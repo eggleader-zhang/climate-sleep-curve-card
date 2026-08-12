@@ -3,16 +3,17 @@
 [![GitHub release](https://img.shields.io/github/v/release/eggleader-zhang/climate-sleep-curve-card)](https://github.com/eggleader-zhang/climate-sleep-curve-card/releases)
 [![HACS validation](https://github.com/eggleader-zhang/climate-sleep-curve-card/actions/workflows/validate.yml/badge.svg)](https://github.com/eggleader-zhang/climate-sleep-curve-card/actions/workflows/validate.yml)
 
-Climate Sleep Curve Card 是 [Climate Sleep Curve](https://github.com/eggleader-zhang/climate-sleep-curve) 的 Home Assistant Dashboard Plugin。它提供适合桌面和移动端的睡眠温度曲线编辑器、控制器配置、会话操作和运行进度展示。
+Climate Sleep Curve Card 是 [Climate Sleep Curve](https://github.com/eggleader-zhang/climate-sleep-curve) 的 Home Assistant Dashboard Plugin。它提供适合桌面和移动端的睡眠温度与风量曲线编辑器、控制器配置、会话操作和运行进度展示。
 
-卡片不直接调用空调服务。它通过 Home Assistant 已认证 WebSocket 连接与后端集成通信，实际调温和安全检查全部由后端完成。
+卡片不直接调用空调服务。它通过 Home Assistant 已认证 WebSocket 连接与后端集成通信，实际调温、调风和安全检查全部由后端完成。
 
 ![Climate Sleep Curve Card 界面预览](docs/images/card-preview.svg)
 
 ## 主要功能
 
 - 创建默认曲线和控制器的首次设置向导。
-- 编辑 4～12 小时睡眠曲线。
+- 编辑 4～12 小时睡眠温度和风量曲线。
+- 选择不控制风速、全程自动风或逐节点风量曲线。
 - 使用鼠标、触控或键盘调整每小时温度节点。
 - 根据绑定空调的温度范围和步进优化编辑范围。
 - 生成推荐舒适曲线。
@@ -58,13 +59,13 @@ HACS 使用公开 GitHub 仓库作为下载源。Gitea 仅作为项目镜像，�
 3. 添加以下资源地址：
 
    ```text
-   /local/climate-sleep-curve-card.js?v=0.3.0
+   /local/climate-sleep-curve-card.js?v=0.4.0
    ```
 
 4. 资源类型选择 **JavaScript 模块**。
 5. 刷新浏览器页面。
 
-`/config/www/` 会映射为 `/local/`。升级文件后可以修改查询参数，例如从 `v=0.2.1` 改为 `v=0.3.0`，以绕过浏览器缓存。
+`/config/www/` 会映射为 `/local/`。升级文件后可以修改查询参数，例如从 `v=0.3.0` 改为 `v=0.4.0`，以绕过浏览器缓存。
 
 ## 添加卡片
 
@@ -119,7 +120,7 @@ compact: false
 
 自动启动默认关闭。创建完成后应根据房间、设备能力和个人舒适度编辑曲线。
 
-## 编辑温度曲线
+## 编辑睡眠曲线
 
 点击卡片中的“曲线管理”，可以新建、选择、编辑、复制或删除多条曲线。控制器当前使用的默认曲线会在列表中标记；选择其他曲线后，可以直接点击“设为默认曲线”。编辑曲线时：
 
@@ -129,8 +130,10 @@ compact: false
 - 点击“推荐曲线”以第一个节点温度为起点生成舒适模板。
 - 点击“复制”为当前曲线创建独立副本。
 - 点击“删除”移除曲线；仍被控制器引用时，后端会拒绝删除。
+- 在“风速控制”中选择“不控制风速”“全程自动风”或“风量曲线”。
+- 风量曲线会为每个温度节点显示一个风速选择框，选项来自当前控制器所有空调共同支持的 `fan_modes`。
 
-缩短时长会删除末尾节点，因此卡片会要求确认。延长时长会继承最后一个节点温度创建新的整点节点。
+缩短时长会删除末尾节点，因此卡片会要求确认。延长时长会继承最后一个节点温度和风速创建新的整点节点。
 
 图表内部以摄氏温度编辑。绑定华氏设备时，显示范围会参考设备属性并换算为摄氏；真正执行时由后端转换为设备温标并按设备步进吸附。
 
@@ -153,7 +156,7 @@ compact: false
 
 ### 启动曲线
 
-先通过原空调界面或设备遥控器打开需要参与的空调，然后点击“启动曲线”。后端会立即对所有已选实体独立处理第 0 分钟节点，并安排后续节点。关闭或不可用的设备会被跳过，不影响其他设备。
+先通过原空调界面或设备遥控器打开需要参与的空调，然后点击“启动曲线”。后端会立即对所有已选实体独立处理第 0 分钟的温度与可选风速，并安排后续节点。关闭或不可用的设备会被跳过，不影响其他设备。
 
 ### 停止
 
@@ -168,16 +171,16 @@ compact: false
 卡片会显示：
 
 - 当前使用的曲线名称。
-- 绑定空调的状态、目标温度，以及该会话最近节点对每台设备的执行结果（已应用、无需调整、已跳过或失败）。
+- 绑定空调的状态、目标温度、当前风速，以及该会话最近节点对每台设备的执行结果（已应用、无需调整、已跳过或失败）。
 - 会话运行或空闲状态。
 - 基于开始和结束时间计算的进度条。
-- 下一节点的本地时间和摄氏目标温度。
+- 下一节点的本地时间、摄氏目标温度和可选目标风速。
 
 后端通过 WebSocket 事件通知卡片刷新，通常不需要手动重新加载页面。
 
 ## 安全边界
 
-- 卡片不会直接调用 `climate.set_temperature` 或任何设备服务。
+- 卡片不会直接调用 `climate.set_temperature`、`climate.set_fan_mode` 或任何设备服务。
 - 卡片不提供打开、关闭或切换 HVAC 模式的操作。
 - 启动会话并不等于打开空调。
 - 空调关闭、不可用或未知时，后端会跳过节点。
@@ -231,9 +234,15 @@ compact: false
 
 可能原因包括：空调关闭/不可用、目标温度已经相同、节点时间尚未到达，或者设备服务调用失败。可查看后端创建的状态传感器属性 `last_result` 和 `last_error`。
 
+### 没有风速选项或风速没有变化
+
+- 只有所有已选空调共同支持的 `fan_modes` 才会显示在风量曲线中。
+- “全程自动风”要求所有已选空调都支持原生 `auto` 风速。
+- 设备运行时不支持目标风速会得到 `skipped_unsupported`，但同一节点的温度仍会继续调整。
+
 ## 更新与卸载
 
-更新时替换 `climate-sleep-curve-card.js`，并刷新浏览器缓存。完整的逐设备结果展示要求后端 `0.3.0` 或更高版本，前后端应配套升级。
+更新时替换 `climate-sleep-curve-card.js`，并刷新浏览器缓存。风速控制要求后端和卡片均为 `0.4.0` 或更高版本，前后端应配套升级。
 
 卸载卡片：
 
@@ -273,4 +282,4 @@ npm run check
 
 ## 版本与许可证
 
-当前版本为 `0.3.0`，采用 [MIT License](LICENSE)。完整功能需要 Climate Sleep Curve 后端 `0.3.0` 或更高版本。
+当前版本为 `0.4.0`，采用 [MIT License](LICENSE)。完整功能需要 Climate Sleep Curve 后端 `0.4.0` 或更高版本。
