@@ -1,6 +1,7 @@
 # Climate Sleep Curve Card / 空调睡眠曲线卡片
 
 [![GitHub release](https://img.shields.io/github/v/release/eggleader-zhang/climate-sleep-curve-card)](https://github.com/eggleader-zhang/climate-sleep-curve-card/releases)
+[![CI](https://github.com/eggleader-zhang/climate-sleep-curve-card/actions/workflows/ci.yml/badge.svg)](https://github.com/eggleader-zhang/climate-sleep-curve-card/actions/workflows/ci.yml)
 [![HACS validation](https://github.com/eggleader-zhang/climate-sleep-curve-card/actions/workflows/validate.yml/badge.svg)](https://github.com/eggleader-zhang/climate-sleep-curve-card/actions/workflows/validate.yml)
 
 Climate Sleep Curve Card 是 [Climate Sleep Curve](https://github.com/eggleader-zhang/climate-sleep-curve) 的 Home Assistant Dashboard Plugin。它提供适合桌面和移动端的睡眠温度与风量曲线编辑器、控制器配置、会话操作和运行进度展示。
@@ -50,7 +51,7 @@ Climate Sleep Curve Card 是 [Climate Sleep Curve](https://github.com/eggleader-
 4. 搜索并下载 **Climate Sleep Curve Card**。
 5. 刷新浏览器；如果仍显示旧版本，请清除前端缓存或重启 Home Assistant 前端。
 
-HACS 使用公开 GitHub 仓库作为下载源。Gitea 仅作为项目镜像，不应填写到 HACS 自定义仓库中。
+本项目仅在 GitHub 维护和发布，HACS 自定义仓库必须使用上面的 GitHub 地址。
 
 ### 手动安装
 
@@ -245,7 +246,9 @@ compact: false
 
 ## 更新与卸载
 
-更新时替换 `climate-sleep-curve-card.js`，并刷新浏览器缓存。自然结束关机要求后端和卡片均为 `0.5.0` 或更高版本，前后端应配套升级。
+通过 HACS 更新时，可在“设置 → 更新”中安装更新；也可以在 HACS 中找到 **Climate Sleep Curve Card**，通过三点菜单选择“重新下载（Redownload）”。完成后重新加载仪表盘。若仍显示旧界面，请强制刷新浏览器。
+
+手动更新时，从 [GitHub Releases](https://github.com/eggleader-zhang/climate-sleep-curve-card/releases) 下载最新的 `climate-sleep-curve-card.js`，替换 `/config/www/` 中的旧文件，并修改资源 URL 的 `?v=` 参数或强制刷新浏览器缓存。自然结束关机要求后端和卡片均为 `0.5.0` 或更高版本，前后端应配套升级。
 
 卸载卡片：
 
