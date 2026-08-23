@@ -32,6 +32,9 @@ function resultMeta(result) {
     skipped_unavailable: [t("\u8BBE\u5907\u4E0D\u53EF\u7528", "Unavailable"), "warning", "mdi:cloud-off-outline"],
     skipped_unknown: [t("\u72B6\u6001\u672A\u77E5", "Unknown"), "warning", "mdi:help-circle-outline"],
     skipped_unsupported: [t("\u98CE\u901F\u4E0D\u652F\u6301", "Fan unsupported"), "warning", "mdi:fan-off"],
+    skipped_state_changed: [t("\u8BBE\u5907\u72B6\u6001\u5DF2\u6539\u53D8", "State changed"), "warning", "mdi:swap-horizontal"],
+    skipped_no_snapshot: [t("\u7F3A\u5C11\u542F\u52A8\u5FEB\u7167", "No starting snapshot"), "warning", "mdi:camera-off-outline"],
+    skipped_cancelled: [t("\u64CD\u4F5C\u5DF2\u53D6\u6D88", "Cancelled"), "warning", "mdi:cancel"],
     skipped_mixed: [t("\u90E8\u5206\u5DF2\u8DF3\u8FC7", "Skipped"), "warning", "mdi:skip-next-circle-outline"],
     skipped_off_after_failure: [t("\u5931\u8D25\u540E\u5173\u95ED", "Off after failure"), "warning", "mdi:power"],
     failed: [t("\u6267\u884C\u5931\u8D25", "Failed"), "error", "mdi:alert-circle"],
@@ -212,6 +215,17 @@ var ClimateSleepCurveCard = class extends HTMLElement {
   supportsCompletionPowerOff() {
     return this.state?.capabilities?.turn_off_after_completion === true;
   }
+  supportsPreviousSettingsRestore() {
+    return this.state?.capabilities?.restore_previous_settings_after_end === true;
+  }
+  bindExclusiveSwitches(first, second) {
+    first.addEventListener("change", () => {
+      if (first.checked) second.checked = false;
+    });
+    second.addEventListener("change", () => {
+      if (second.checked) first.checked = false;
+    });
+  }
   commonFanModes() {
     const lists = this.entityIds(this.controller).map((entityId) => this._hass.states[entityId]?.attributes?.fan_modes).filter((modes) => Array.isArray(modes)).map((modes) => modes.filter((mode) => typeof mode === "string" && mode.length));
     if (!lists.length || lists.length !== this.entityIds(this.controller).length) return [];
@@ -264,6 +278,7 @@ var ClimateSleepCurveCard = class extends HTMLElement {
       .progress{height:7px;background:var(--divider-color);border-radius:5px;margin:15px 0;overflow:hidden}.progress i{display:block;height:100%;background:var(--primary-color)}
       dialog{border:0;border-radius:18px;padding:0;background:var(--card-background-color);color:var(--primary-text-color);width:min(720px,calc(100vw - 24px));max-height:calc(100vh - 24px)}dialog::backdrop{background:#0008}.editor{padding:20px;overflow:auto;max-height:calc(100vh - 64px)}
       label{display:block;margin:14px 0 5px}.field,select{box-sizing:border-box;width:100%;padding:10px;border:1px solid var(--divider-color);border-radius:8px;background:var(--card-background-color);color:var(--primary-text-color)}
+      .end-actions{border:0;padding:0;margin:18px 0 0}.end-actions legend{font-weight:500;padding:0}.end-actions p{line-height:1.5;overflow-wrap:anywhere}
       ha-selector,ha-textfield,ha-alert{display:block}.setting-row{display:flex;align-items:center;gap:10px;margin-top:18px}.setting-row label{margin:0}.weekdays{display:grid;grid-template-columns:repeat(7,minmax(58px,1fr));gap:6px}.weekday{display:flex;align-items:center;justify-content:center;gap:2px;margin:0;padding:7px 3px;border:1px solid var(--divider-color);border-radius:10px;cursor:pointer}.entity-list{display:grid;gap:5px;margin:12px 0}.entity-state{display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:9px;background:color-mix(in srgb,var(--primary-color) 5%,transparent)}.entity-main{flex:1;min-width:0}.result{display:inline-flex;align-items:center;gap:4px;padding:3px 7px;border-radius:12px;font-size:12px;white-space:nowrap}.result ha-icon{--mdc-icon-size:16px}.result.success{color:var(--success-color);background:color-mix(in srgb,var(--success-color) 12%,transparent)}.result.warning{color:var(--warning-color);background:color-mix(in srgb,var(--warning-color) 12%,transparent)}.result.error{color:var(--error-color);background:color-mix(in srgb,var(--error-color) 12%,transparent)}.result.neutral{color:var(--secondary-text-color);background:var(--divider-color)}
       .chart{touch-action:none;width:100%;height:auto;background:color-mix(in srgb,var(--primary-color) 5%,transparent);border-radius:12px}.grid{stroke:var(--divider-color);stroke-width:1}.curve{fill:none;stroke:var(--primary-color);stroke-width:3}.area{fill:color-mix(in srgb,var(--primary-color) 18%,transparent)}.dot{fill:var(--primary-color);stroke:var(--card-background-color);stroke-width:3;cursor:ns-resize}.hit{fill:transparent;cursor:ns-resize}.axis{fill:var(--secondary-text-color);font-size:11px}.bubble{fill:var(--card-background-color);stroke:var(--primary-color)}
       .fan-curve{display:grid;grid-template-columns:repeat(auto-fit,minmax(105px,1fr));gap:8px;margin-top:8px}.fan-point{padding:8px;border:1px solid var(--divider-color);border-radius:10px;background:color-mix(in srgb,var(--primary-color) 4%,transparent)}.fan-point label{margin:0 0 5px;font-size:12px;color:var(--secondary-text-color)}.fan-point select{padding:7px}
@@ -291,6 +306,8 @@ var ClimateSleepCurveCard = class extends HTMLElement {
     const profile = this.profile;
     const session = this.session;
     const entityIds = this.entityIds(session || this.controller);
+    const endAction = session || this.controller;
+    const endActionLabel = endAction.restore_previous_settings_after_end ? ` \xB7 ${t("\u7ED3\u675F\u65F6\u6062\u590D", "restore at end")}` : endAction.turn_off_after_completion ? ` \xB7 ${t("\u7ED3\u675F\u540E\u5173\u673A", "turn off at end")}` : "";
     let progress = 0;
     let next = null;
     let nextTime = null;
@@ -300,7 +317,7 @@ var ClimateSleepCurveCard = class extends HTMLElement {
       if (next) nextTime = new Intl.DateTimeFormat(void 0, { hour: "2-digit", minute: "2-digit" }).format(new Date(Date.parse(session.started_at) + next.offset_minutes * 6e4));
     }
     this.shadowRoot.innerHTML = `${style}<ha-card>
-      <div class="row between"><div><div class="title">${esc(this.config.name || this.controller.name)}</div><div class="muted">${esc(session?.profile_snapshot?.name || profile?.name || t("\u66F2\u7EBF\u4E0D\u5B58\u5728", "Missing profile"))}${(session ? session.turn_off_after_completion : this.controller.turn_off_after_completion) ? ` \xB7 ${t("\u7ED3\u675F\u540E\u5173\u673A", "turn off at end")}` : ""}</div></div><ha-icon icon="mdi:sleep"></ha-icon></div>
+      <div class="row between"><div><div class="title">${esc(this.config.name || this.controller.name)}</div><div class="muted">${esc(session?.profile_snapshot?.name || profile?.name || t("\u66F2\u7EBF\u4E0D\u5B58\u5728", "Missing profile"))}${endActionLabel}</div></div><ha-icon icon="mdi:sleep"></ha-icon></div>
       ${this.config.show_climate_state ? `<div class="entity-list">${entityIds.map((entityId) => {
       const climate = this._hass.states[entityId], result = this.entityResult(session, entityId), meta = resultMeta(result?.result), detail = entityResultSummary(result), title = [detail, result?.error].filter(Boolean).join("\n");
       return `<div class="entity-state"><div class="entity-main">${esc(climate?.attributes?.friendly_name || entityId)} \xB7 ${esc(climate?.state || "unknown")}${climate?.attributes?.temperature != null ? ` \xB7 ${esc(climate.attributes.temperature)}\xB0` : ""}${climate?.attributes?.fan_mode ? ` \xB7 ${t("\u98CE\u901F", "Fan")} ${esc(this.fanModeLabel(climate.attributes.fan_mode))}` : ""}<div class="muted">${esc(entityId)}${detail ? `<br>${esc(detail)}` : ""}</div></div>${result ? `<span class="result ${meta.tone}" title="${esc(title)}"><ha-icon icon="${meta.icon}"></ha-icon>${esc(meta.label)}</span>` : ""}</div>`;
@@ -341,7 +358,7 @@ var ClimateSleepCurveCard = class extends HTMLElement {
       let profile = null;
       try {
         profile = await this._hass.callWS({ type: "climate_sleep_curve/profile/save", profile: { name: this.dialog.querySelector("#pname").value, duration_minutes: 480, interpolation: "step", fan_mode_control: "none", points: [26.5, 26.5, 27, 27.5, 28, 28, 27.5, 27].map((temperature, index) => ({ offset_minutes: index * 60, temperature })) }, expected_revision: null });
-        const controller = await this._hass.callWS({ type: "climate_sleep_curve/controller/save", controller: { name: this.dialog.querySelector("#cname").value, climate_entity_ids: entityIds, profile_id: profile.id, enabled: true, turn_off_after_completion: false, automatic_start: { enabled: false, time: "23:00:00", weekdays: [0, 1, 2, 3, 4, 5, 6] } }, expected_revision: null });
+        const controller = await this._hass.callWS({ type: "climate_sleep_curve/controller/save", controller: { name: this.dialog.querySelector("#cname").value, climate_entity_ids: entityIds, profile_id: profile.id, enabled: true, turn_off_after_completion: false, restore_previous_settings_after_end: false, automatic_start: { enabled: false, time: "23:00:00", weekdays: [0, 1, 2, 3, 4, 5, 6] } }, expected_revision: null });
         this.config.controller_id = controller.id;
         this.dialog.close();
         await this.refresh();
@@ -361,7 +378,9 @@ var ClimateSleepCurveCard = class extends HTMLElement {
     const profiles = this.state.profiles;
     const auto = controller.automatic_start;
     const supportsCompletionPowerOff = this.supportsCompletionPowerOff();
+    const supportsPreviousSettingsRestore = this.supportsPreviousSettingsRestore();
     const powerOffDisabled = supportsCompletionPowerOff ? "" : "disabled";
+    const restoreDisabled = supportsPreviousSettingsRestore ? "" : "disabled";
     const powerOffHelp = supportsCompletionPowerOff ? t(
       "\u4EC5\u6B63\u5E38\u8FD0\u884C\u5230\u66F2\u7EBF\u7ED3\u675F\u65F6\u751F\u6548\uFF1B\u624B\u52A8\u505C\u6B62\u3001\u91CD\u65B0\u5F00\u59CB\u3001\u5220\u9664\u63A7\u5236\u5668\u6216 Home Assistant \u91CD\u542F\u6062\u590D\u90FD\u4E0D\u4F1A\u5173\u95ED\u7A7A\u8C03\u3002\u6240\u9009\u7A7A\u8C03\u5FC5\u987B\u652F\u6301\u5173\u673A\u670D\u52A1\u3002",
       "Only applies when the curve reaches its natural end. Manual stop, restart, controller deletion, and Home Assistant recovery never turn devices off. Every selected climate entity must support turn off."
@@ -369,13 +388,24 @@ var ClimateSleepCurveCard = class extends HTMLElement {
       "\u8BF7\u5148\u5C06 Climate Sleep Curve \u540E\u7AEF\u66F4\u65B0\u5230 0.5.0 \u6216\u66F4\u9AD8\u7248\u672C\u3002",
       "Update the Climate Sleep Curve backend to version 0.5.0 or later first."
     );
+    const restoreHelp = supportsPreviousSettingsRestore ? t(
+      "\u81EA\u7136\u7ED3\u675F\u6216\u660E\u786E\u70B9\u51FB\u505C\u6B62\u65F6\uFF0C\u6062\u590D\u542F\u52A8\u524D\u7684\u76EE\u6807\u6E29\u5EA6\u548C\u98CE\u901F\u3002\u82E5\u8BBE\u5907\u5F00\u5173\u6216 HVAC \u6A21\u5F0F\u5DF2\u6539\u53D8\uFF0C\u5219\u6574\u53F0\u8BBE\u5907\u8DF3\u8FC7\uFF1B\u91CD\u65B0\u5F00\u59CB\u3001\u66FF\u6362\u3001\u5220\u9664\u3001\u91CD\u8F7D\u548C\u91CD\u542F\u6062\u590D\u4E0D\u4F1A\u6267\u884C\u3002",
+      "On natural completion or an explicit stop, restore the starting target temperature and fan. If power or HVAC mode changed, the entire device is skipped. Restart, replacement, deletion, reload, and recovery do not restore it."
+    ) : t(
+      "\u8BF7\u5148\u5C06 Climate Sleep Curve \u540E\u7AEF\u66F4\u65B0\u5230 0.6.0 \u6216\u66F4\u9AD8\u7248\u672C\u3002",
+      "Update the Climate Sleep Curve backend to version 0.6.0 or later first."
+    );
     const weekdayLabels = [t("\u5468\u4E00", "Mon"), t("\u5468\u4E8C", "Tue"), t("\u5468\u4E09", "Wed"), t("\u5468\u56DB", "Thu"), t("\u5468\u4E94", "Fri"), t("\u5468\u516D", "Sat"), t("\u5468\u65E5", "Sun")];
-    this.dialog.innerHTML = `<div class="editor"><div class="title">${t("\u63A7\u5236\u5668\u8BBE\u7F6E", "Controller settings")}</div><label>${t("\u540D\u79F0", "Name")}</label><input class="field" id="name" value="${esc(controller.name)}"><label>${t("\u7A7A\u8C03\u5B9E\u4F53\uFF08\u53EF\u591A\u9009\uFF09", "Climate entities (multiple allowed)")}</label><ha-selector id="entities"></ha-selector><label>${t("\u4E0B\u6B21\u4F1A\u8BDD\u4F7F\u7528\u7684\u66F2\u7EBF", "Profile for the next session")}</label><select id="profile">${profiles.map((profile) => `<option ${profile.id === controller.profile_id ? "selected" : ""} value="${profile.id}">${esc(profile.name)}</option>`).join("")}</select><div class="setting-row"><ha-switch id="automatic"></ha-switch><label for="automatic">${t("\u6BCF\u5929\u81EA\u52A8\u542F\u52A8", "Start automatically")}</label></div><label>${t("\u542F\u52A8\u65F6\u95F4", "Start time")}</label><ha-selector id="time"></ha-selector><label>${t("\u751F\u6548\u65E5\u671F", "Active weekdays")}</label><div class="weekdays">${weekdayLabels.map((label, index) => `<label class="weekday"><ha-checkbox data-day="${index}"></ha-checkbox><span>${label}</span></label>`).join("")}</div><div class="setting-row"><ha-switch id="turn-off-after-completion" ${powerOffDisabled}></ha-switch><label for="turn-off-after-completion">${t("\u66F2\u7EBF\u81EA\u7136\u7ED3\u675F\u540E\u5173\u95ED\u7A7A\u8C03", "Turn off climate devices after natural completion")}</label></div><p class="muted">${powerOffHelp}</p><div class="actions"><button id="save">${t("\u4FDD\u5B58", "Save")}</button><button class="secondary" id="cancel">${t("\u53D6\u6D88", "Cancel")}</button><button class="danger" id="delete">${t("\u5220\u9664\u63A7\u5236\u5668", "Delete controller")}</button></div></div>`;
+    this.dialog.innerHTML = `<div class="editor"><div class="title">${t("\u63A7\u5236\u5668\u8BBE\u7F6E", "Controller settings")}</div><label>${t("\u540D\u79F0", "Name")}</label><input class="field" id="name" value="${esc(controller.name)}"><label>${t("\u7A7A\u8C03\u5B9E\u4F53\uFF08\u53EF\u591A\u9009\uFF09", "Climate entities (multiple allowed)")}</label><ha-selector id="entities"></ha-selector><label>${t("\u4E0B\u6B21\u4F1A\u8BDD\u4F7F\u7528\u7684\u66F2\u7EBF", "Profile for the next session")}</label><select id="profile">${profiles.map((profile) => `<option ${profile.id === controller.profile_id ? "selected" : ""} value="${profile.id}">${esc(profile.name)}</option>`).join("")}</select><div class="setting-row"><ha-switch id="automatic"></ha-switch><label for="automatic">${t("\u6BCF\u5929\u81EA\u52A8\u542F\u52A8", "Start automatically")}</label></div><label>${t("\u542F\u52A8\u65F6\u95F4", "Start time")}</label><ha-selector id="time"></ha-selector><label>${t("\u751F\u6548\u65E5\u671F", "Active weekdays")}</label><div class="weekdays">${weekdayLabels.map((label, index) => `<label class="weekday"><ha-checkbox data-day="${index}"></ha-checkbox><span>${label}</span></label>`).join("")}</div><fieldset class="end-actions"><legend>${t("\u7ED3\u675F\u52A8\u4F5C\uFF08\u53EA\u80FD\u9009\u62E9\u4E00\u9879\uFF09", "End action (choose one)")}</legend><div class="setting-row"><ha-switch id="turn-off-after-completion" aria-describedby="turn-off-help" ${powerOffDisabled}></ha-switch><label for="turn-off-after-completion">${t("\u66F2\u7EBF\u81EA\u7136\u7ED3\u675F\u540E\u5173\u95ED\u7A7A\u8C03", "Turn off climate devices after natural completion")}</label></div><p class="muted" id="turn-off-help">${powerOffHelp}</p><div class="setting-row"><ha-switch id="restore-previous-settings" aria-describedby="restore-help" ${restoreDisabled}></ha-switch><label for="restore-previous-settings">${t("\u7ED3\u675F\u65F6\u6062\u590D\u542F\u52A8\u524D\u7684\u6E29\u5EA6\u548C\u98CE\u901F", "Restore starting temperature and fan at end")}</label></div><p class="muted" id="restore-help">${restoreHelp}</p></fieldset><div class="actions"><button id="save">${t("\u4FDD\u5B58", "Save")}</button><button class="secondary" id="cancel">${t("\u53D6\u6D88", "Cancel")}</button><button class="danger" id="delete">${t("\u5220\u9664\u63A7\u5236\u5668", "Delete controller")}</button></div></div>`;
     this.dialog.showModal();
     const entitySelector = this.setupSelector("#entities", { entity: { filter: { domain: "climate" }, multiple: true } }, this.entityIds(controller));
     const timeSelector = this.setupSelector("#time", { time: { no_second: true } }, auto.time);
     this.dialog.querySelector("#automatic").checked = auto.enabled;
-    this.dialog.querySelector("#turn-off-after-completion").checked = supportsCompletionPowerOff && Boolean(controller.turn_off_after_completion);
+    const turnOffSwitch = this.dialog.querySelector("#turn-off-after-completion");
+    const restoreSwitch = this.dialog.querySelector("#restore-previous-settings");
+    turnOffSwitch.checked = supportsCompletionPowerOff && Boolean(controller.turn_off_after_completion);
+    restoreSwitch.checked = supportsPreviousSettingsRestore && Boolean(controller.restore_previous_settings_after_end) && !turnOffSwitch.checked;
+    this.bindExclusiveSwitches(turnOffSwitch, restoreSwitch);
     this.dialog.querySelectorAll("ha-checkbox[data-day]").forEach((checkbox) => {
       checkbox.checked = auto.weekdays.includes(Number(checkbox.dataset.day));
     });
@@ -398,7 +428,8 @@ var ClimateSleepCurveCard = class extends HTMLElement {
             climate_entity_ids: entityIds,
             climate_entity_id: entityIds[0],
             profile_id: this.dialog.querySelector("#profile").value,
-            turn_off_after_completion: supportsCompletionPowerOff && this.dialog.querySelector("#turn-off-after-completion").checked,
+            turn_off_after_completion: supportsCompletionPowerOff && turnOffSwitch.checked,
+            restore_previous_settings_after_end: supportsPreviousSettingsRestore && restoreSwitch.checked,
             automatic_start: {
               enabled: this.dialog.querySelector("#automatic").checked,
               time,

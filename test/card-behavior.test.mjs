@@ -63,6 +63,8 @@ test("per-entity execution outcomes have readable presentation metadata", () => 
   assert.equal(resultMeta("partial_failure").tone, "error");
   assert.equal(resultMeta("skipped_off").tone, "warning");
   assert.equal(resultMeta("skipped_unsupported").tone, "warning");
+  assert.equal(resultMeta("skipped_state_changed").tone, "warning");
+  assert.equal(resultMeta("skipped_no_snapshot").tone, "warning");
   assert.equal(entityResultSummary({
     temperature_result: "applied",
     fan_result: "failed",
@@ -103,17 +105,47 @@ test("source uses non-blocking in-card dialogs instead of browser dialogs", asyn
   assert.doesNotMatch(sources.join("\n"), /\b(?:alert|prompt|confirm)\s*\(/);
 });
 
-test("controller editor persists the opt-in natural-completion power setting", async () => {
+test("controller editor persists mutually exclusive opt-in end actions", async () => {
   const source = await readFile(new URL("../src/card.mjs", import.meta.url), "utf8");
   const card = new Card();
 
   assert.match(source, /id="turn-off-after-completion"/);
+  assert.match(source, /id="restore-previous-settings"/);
   assert.match(source, /turn_off_after_completion: supportsCompletionPowerOff/);
+  assert.match(source, /restore_previous_settings_after_end: supportsPreviousSettingsRestore/);
   assert.match(source, /turn_off_after_completion:false/);
+  assert.match(source, /restore_previous_settings_after_end:false/);
   assert.doesNotMatch(source, /callService\s*\(/);
 
-  card.state = {capabilities: {turn_off_after_completion: true}};
+  card.state = {capabilities: {
+    turn_off_after_completion: true,
+    restore_previous_settings_after_end: true,
+  }};
   assert.equal(card.supportsCompletionPowerOff(), true);
+  assert.equal(card.supportsPreviousSettingsRestore(), true);
   card.state = {capabilities: {}};
   assert.equal(card.supportsCompletionPowerOff(), false);
+  assert.equal(card.supportsPreviousSettingsRestore(), false);
+});
+
+test("choosing one controller end action clears the other", () => {
+  const card = new Card();
+  const makeSwitch = () => ({
+    checked: false,
+    listeners: {},
+    addEventListener(type, listener) { this.listeners[type] = listener; },
+  });
+  const turnOff = makeSwitch();
+  const restore = makeSwitch();
+
+  card.bindExclusiveSwitches(turnOff, restore);
+  turnOff.checked = true;
+  restore.checked = true;
+  turnOff.listeners.change();
+  assert.equal(restore.checked, false);
+
+  turnOff.checked = true;
+  restore.checked = true;
+  restore.listeners.change();
+  assert.equal(turnOff.checked, false);
 });
