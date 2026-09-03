@@ -116,6 +116,7 @@ test("controller editor persists mutually exclusive opt-in end actions", async (
   assert.match(source, /restore_previous_settings_after_end: supportsPreviousSettingsRestore/);
   assert.match(source, /turn_off_after_completion:false/);
   assert.match(source, /turn_off_after_minutes:null/);
+  assert.match(source, /if \(restoreSwitch\.checked\) preserveLegacyCompletion = false/);
   assert.match(source, /restore_previous_settings_after_end:false/);
   assert.doesNotMatch(source, /callService\s*\(/);
 

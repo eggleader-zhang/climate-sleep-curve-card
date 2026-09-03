@@ -402,8 +402,8 @@ var ClimateSleepCurveCard = class extends HTMLElement {
     const powerOffDisabled = supportsCompletionPowerOff ? "" : "disabled";
     const restoreDisabled = supportsPreviousSettingsRestore ? "" : "disabled";
     const powerOffHelp = supportsScheduledPowerOff ? t(
-      "\u4ECE\u66F2\u7EBF\u542F\u52A8\u65F6\u5F00\u59CB\u8BA1\u65F6\uFF0C\u5230\u70B9\u540E\u81EA\u7136\u7ED3\u675F\u672C\u6B21\u4F1A\u8BDD\u5E76\u5173\u95ED\u7A7A\u8C03\u3002\u65F6\u95F4\u5FC5\u987B\u5927\u4E8E 0 \u4E14\u5C0F\u4E8E\u6240\u9009\u66F2\u7EBF\u65F6\u957F\uFF0C\u754C\u9762\u6309 0.5 \u5C0F\u65F6\u9012\u589E\u3002\u624B\u52A8\u505C\u6B62\u3001\u91CD\u65B0\u5F00\u59CB\u3001\u5220\u9664\u63A7\u5236\u5668\u6216 Home Assistant \u91CD\u542F\u6062\u590D\u90FD\u4E0D\u4F1A\u5173\u95ED\u7A7A\u8C03\u3002",
-      "Counts from the curve start, then naturally completes the session and turns the climate devices off. The time must be greater than zero and shorter than the selected profile, in 0.5-hour steps. Manual stop, restart, controller deletion, and Home Assistant recovery never turn devices off."
+      "\u4ECE\u66F2\u7EBF\u542F\u52A8\u65F6\u5F00\u59CB\u8BA1\u65F6\uFF0C\u5230\u70B9\u540E\u81EA\u7136\u7ED3\u675F\u672C\u6B21\u4F1A\u8BDD\u5E76\u5173\u95ED\u7A7A\u8C03\u3002\u65F6\u95F4\u5FC5\u987B\u5927\u4E8E 0 \u4E14\u5C0F\u4E8E\u6240\u9009\u66F2\u7EBF\u65F6\u957F\uFF0C\u754C\u9762\u6309 0.5 \u5C0F\u65F6\u9012\u589E\uFF1B\u6240\u9009\u7A7A\u8C03\u5FC5\u987B\u652F\u6301\u5173\u673A\u670D\u52A1\u3002\u624B\u52A8\u505C\u6B62\u3001\u91CD\u65B0\u5F00\u59CB\u3001\u5220\u9664\u63A7\u5236\u5668\u6216 Home Assistant \u91CD\u542F\u6062\u590D\u90FD\u4E0D\u4F1A\u5173\u95ED\u7A7A\u8C03\u3002",
+      "Counts from the curve start, then naturally completes the session and turns the climate devices off. The time must be greater than zero and shorter than the selected profile, in 0.5-hour steps; every selected climate entity must support turn off. Manual stop, restart, controller deletion, and Home Assistant recovery never turn devices off."
     ) : supportsCompletionPowerOff ? t(
       "\u4EC5\u6B63\u5E38\u8FD0\u884C\u5230\u66F2\u7EBF\u7ED3\u675F\u65F6\u751F\u6548\uFF1B\u624B\u52A8\u505C\u6B62\u3001\u91CD\u65B0\u5F00\u59CB\u3001\u5220\u9664\u63A7\u5236\u5668\u6216 Home Assistant \u91CD\u542F\u6062\u590D\u90FD\u4E0D\u4F1A\u5173\u95ED\u7A7A\u8C03\u3002\u6240\u9009\u7A7A\u8C03\u5FC5\u987B\u652F\u6301\u5173\u673A\u670D\u52A1\u3002",
       "Only applies when the curve reaches its natural end. Manual stop, restart, controller deletion, and Home Assistant recovery never turn devices off. Every selected climate entity must support turn off."
@@ -444,7 +444,10 @@ var ClimateSleepCurveCard = class extends HTMLElement {
         turnOffHours.value = String(bounds.max / 60);
       }
       const help = this.dialog.querySelector("#turn-off-time-help");
-      if (help) help.textContent = t(
+      if (help) help.textContent = preserveLegacyCompletion && turnOffSwitch.checked && !turnOffHours.value ? t(
+        "\u5F53\u524D\u4FDD\u7559\u65E7\u8BBE\u7F6E\uFF1A\u66F2\u7EBF\u7ED3\u675F\u65F6\u5173\u673A\u3002\u586B\u5199\u4E00\u4E2A\u65F6\u95F4\u5373\u53EF\u6539\u4E3A\u63D0\u524D\u5173\u673A\u3002",
+        "The legacy setting is preserved: turn off at profile completion. Enter a time to switch to early turn-off."
+      ) : t(
         `\u53EF\u8BBE\u7F6E ${this.formatHours(bounds.min)}\uFF5E${this.formatHours(bounds.max)}\uFF1B\u6240\u9009\u66F2\u7EBF\u5171 ${this.formatHours(bounds.duration)}\u3002`,
         `Choose ${this.formatHours(bounds.min)}\u2013${this.formatHours(bounds.max)}; the selected profile is ${this.formatHours(bounds.duration)}.`
       );
@@ -457,7 +460,10 @@ var ClimateSleepCurveCard = class extends HTMLElement {
       if (!turnOffSwitch.checked) preserveLegacyCompletion = false;
       updateTurnOffTime(turnOffSwitch.checked && !preserveLegacyCompletion);
     });
-    restoreSwitch.addEventListener("change", () => updateTurnOffTime(false));
+    restoreSwitch.addEventListener("change", () => {
+      if (restoreSwitch.checked) preserveLegacyCompletion = false;
+      updateTurnOffTime(false);
+    });
     profileSelect.addEventListener("change", () => updateTurnOffTime(turnOffSwitch.checked && !preserveLegacyCompletion));
     this.dialog.querySelectorAll("ha-checkbox[data-day]").forEach((checkbox) => {
       checkbox.checked = auto.weekdays.includes(Number(checkbox.dataset.day));

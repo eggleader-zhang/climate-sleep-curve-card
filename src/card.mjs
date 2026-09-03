@@ -260,8 +260,8 @@ class ClimateSleepCurveCard extends HTMLElement {
     const restoreDisabled = supportsPreviousSettingsRestore ? "" : "disabled";
     const powerOffHelp = supportsScheduledPowerOff
       ? t(
-        "从曲线启动时开始计时，到点后自然结束本次会话并关闭空调。时间必须大于 0 且小于所选曲线时长，界面按 0.5 小时递增。手动停止、重新开始、删除控制器或 Home Assistant 重启恢复都不会关闭空调。",
-        "Counts from the curve start, then naturally completes the session and turns the climate devices off. The time must be greater than zero and shorter than the selected profile, in 0.5-hour steps. Manual stop, restart, controller deletion, and Home Assistant recovery never turn devices off.",
+        "从曲线启动时开始计时，到点后自然结束本次会话并关闭空调。时间必须大于 0 且小于所选曲线时长，界面按 0.5 小时递增；所选空调必须支持关机服务。手动停止、重新开始、删除控制器或 Home Assistant 重启恢复都不会关闭空调。",
+        "Counts from the curve start, then naturally completes the session and turns the climate devices off. The time must be greater than zero and shorter than the selected profile, in 0.5-hour steps; every selected climate entity must support turn off. Manual stop, restart, controller deletion, and Home Assistant recovery never turn devices off.",
       )
       : supportsCompletionPowerOff
       ? t(
@@ -310,10 +310,17 @@ class ClimateSleepCurveCard extends HTMLElement {
         turnOffHours.value = String(bounds.max / 60);
       }
       const help = this.dialog.querySelector("#turn-off-time-help");
-      if (help) help.textContent = t(
-        `可设置 ${this.formatHours(bounds.min)}～${this.formatHours(bounds.max)}；所选曲线共 ${this.formatHours(bounds.duration)}。`,
-        `Choose ${this.formatHours(bounds.min)}–${this.formatHours(bounds.max)}; the selected profile is ${this.formatHours(bounds.duration)}.`,
-      );
+      if (help) help.textContent = preserveLegacyCompletion
+        && turnOffSwitch.checked
+        && !turnOffHours.value
+        ? t(
+          "当前保留旧设置：曲线结束时关机。填写一个时间即可改为提前关机。",
+          "The legacy setting is preserved: turn off at profile completion. Enter a time to switch to early turn-off.",
+        )
+        : t(
+          `可设置 ${this.formatHours(bounds.min)}～${this.formatHours(bounds.max)}；所选曲线共 ${this.formatHours(bounds.duration)}。`,
+          `Choose ${this.formatHours(bounds.min)}–${this.formatHours(bounds.max)}; the selected profile is ${this.formatHours(bounds.duration)}.`,
+        );
     };
     if (turnOffHours && controller.turn_off_after_minutes != null) {
       turnOffHours.value = String(controller.turn_off_after_minutes / 60);
@@ -323,7 +330,10 @@ class ClimateSleepCurveCard extends HTMLElement {
       if (!turnOffSwitch.checked) preserveLegacyCompletion = false;
       updateTurnOffTime(turnOffSwitch.checked && !preserveLegacyCompletion);
     });
-    restoreSwitch.addEventListener("change", () => updateTurnOffTime(false));
+    restoreSwitch.addEventListener("change", () => {
+      if (restoreSwitch.checked) preserveLegacyCompletion = false;
+      updateTurnOffTime(false);
+    });
     profileSelect.addEventListener("change", () => updateTurnOffTime(turnOffSwitch.checked && !preserveLegacyCompletion));
     this.dialog.querySelectorAll("ha-checkbox[data-day]").forEach((checkbox) => { checkbox.checked=auto.weekdays.includes(Number(checkbox.dataset.day)); });
     this.dialog.querySelector("#cancel").onclick = () => this.dialog.close();

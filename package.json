@@ -1,6 +1,6 @@
 {
   "name": "climate-sleep-curve-card",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "type": "module",
   "scripts": {
     "build": "esbuild src/card.mjs --bundle --format=esm --target=es2022 --outfile=climate-sleep-curve-card.js",
