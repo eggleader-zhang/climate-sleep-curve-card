@@ -112,20 +112,38 @@ test("controller editor persists mutually exclusive opt-in end actions", async (
   assert.match(source, /id="turn-off-after-completion"/);
   assert.match(source, /id="restore-previous-settings"/);
   assert.match(source, /turn_off_after_completion: supportsCompletionPowerOff/);
+  assert.match(source, /turn_off_after_minutes: supportsScheduledPowerOff/);
   assert.match(source, /restore_previous_settings_after_end: supportsPreviousSettingsRestore/);
   assert.match(source, /turn_off_after_completion:false/);
+  assert.match(source, /turn_off_after_minutes:null/);
   assert.match(source, /restore_previous_settings_after_end:false/);
   assert.doesNotMatch(source, /callService\s*\(/);
 
   card.state = {capabilities: {
     turn_off_after_completion: true,
+    turn_off_after_minutes: true,
     restore_previous_settings_after_end: true,
   }};
   assert.equal(card.supportsCompletionPowerOff(), true);
+  assert.equal(card.supportsScheduledPowerOff(), true);
   assert.equal(card.supportsPreviousSettingsRestore(), true);
   card.state = {capabilities: {}};
   assert.equal(card.supportsCompletionPowerOff(), false);
+  assert.equal(card.supportsScheduledPowerOff(), false);
   assert.equal(card.supportsPreviousSettingsRestore(), false);
+});
+
+test("scheduled power-off bounds stay strictly inside the profile", () => {
+  const card = new Card();
+  card.state = {profiles: [{id: "eight-hours", duration_minutes: 480}]};
+
+  assert.deepEqual(card.powerOffBounds("eight-hours"), {
+    duration: 480,
+    min: 30,
+    max: 450,
+    suggested: 360,
+  });
+  assert.equal(card.formatHours(360), "6h");
 });
 
 test("choosing one controller end action clears the other", () => {

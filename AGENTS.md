@@ -11,7 +11,7 @@
 ## 不可破坏的产品边界
 
 1. 前端不得直接调用 `hass.callService` 控制 `climate` 实体。
-2. 不得新增打开、切换或修改 HVAC 模式的按钮和隐式行为；允许配置后端控制器的 `turn_off_after_completion` 和 `restore_previous_settings_after_end`，但前端自身仍不得调用任何设备服务。
+2. 不得新增打开、切换或修改 HVAC 模式的按钮和隐式行为；允许配置后端控制器的 `turn_off_after_completion`、`turn_off_after_minutes` 和 `restore_previous_settings_after_end`，但前端自身仍不得调用任何设备服务。
 3. 所有会话操作和配置写入必须通过 `climate_sleep_curve/*` WebSocket 命令交给后端。
 4. UI 文案不得暗示“启动曲线”会打开空调，或“停止曲线”会关闭空调；必须明确只有启用关机后的自然结束才会关机。安全恢复只能恢复启动时的目标温度和风速，不恢复开关机或 HVAC 模式，且设备状态改变时整台跳过。
 5. 空调关闭、不可用和未知状态只是展示信息；卡片不得尝试绕过后端安全跳过逻辑。
@@ -75,7 +75,7 @@
 - 新增订阅必须保存取消函数，并在 `disconnectedCallback` 中释放。
 - 不要高频轮询；优先使用后端订阅事件触发刷新。
 - 前后端字段变化必须同步修改两个仓库、README、测试和版本说明。
-- `turn_off_after_completion` 与 `restore_previous_settings_after_end` 必须在控制器设置中作为互斥结束动作展示；卡片应使用后端 capability 兼容旧版本。
+- `turn_off_after_completion` 与 `restore_previous_settings_after_end` 必须在控制器设置中作为互斥结束动作展示；支持 `turn_off_after_minutes` 时，关机时间必须严格位于曲线内部。卡片应使用后端 capability 兼容旧版本。
 
 ## 状态管理和并发
 

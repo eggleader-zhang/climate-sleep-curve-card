@@ -79,6 +79,10 @@ class ClimateSleepCurveCard extends HTMLElement {
     return this.state?.capabilities?.turn_off_after_completion === true;
   }
 
+  supportsScheduledPowerOff() {
+    return this.state?.capabilities?.turn_off_after_minutes === true;
+  }
+
   supportsPreviousSettingsRestore() {
     return this.state?.capabilities?.restore_previous_settings_after_end === true;
   }
@@ -127,6 +131,24 @@ class ClimateSleepCurveCard extends HTMLElement {
     return match ? `${match[1]}:${match[2]}:${match[3] || "00"}` : null;
   }
 
+  formatHours(minutes) {
+    const hours = Number(minutes) / 60;
+    const value = Number.isInteger(hours) ? String(hours) : String(Math.round(hours * 10) / 10);
+    return t(`${value} 小时`, `${value}h`);
+  }
+
+  powerOffBounds(profileId) {
+    const profile = this.state?.profiles?.find((item) => item.id === profileId);
+    const duration = Number(profile?.duration_minutes);
+    if (!Number.isFinite(duration) || duration <= 30) return null;
+    return {
+      duration,
+      min: 30,
+      max: duration - 30,
+      suggested: Math.max(30, Math.min(duration - 30, duration - 120)),
+    };
+  }
+
   setupSelector(selector, config, value) {
     const element = this.dialog.querySelector(selector);
     element.hass = this._hass;
@@ -168,7 +190,9 @@ class ClimateSleepCurveCard extends HTMLElement {
     const endActionLabel = endAction.restore_previous_settings_after_end
       ? ` · ${t("结束时恢复", "restore at end")}`
       : endAction.turn_off_after_completion
-        ? ` · ${t("结束后关机", "turn off at end")}`
+        ? endAction.turn_off_after_minutes
+          ? ` · ${this.formatHours(endAction.turn_off_after_minutes)}${t("后关机", " until turn off")}`
+          : ` · ${t("结束后关机", "turn off at end")}`
         : "";
     let progress = 0;
     let next = null;
@@ -182,7 +206,7 @@ class ClimateSleepCurveCard extends HTMLElement {
       <div class="row between"><div><div class="title">${esc(this.config.name || this.controller.name)}</div><div class="muted">${esc(session?.profile_snapshot?.name || profile?.name || t("曲线不存在", "Missing profile"))}${endActionLabel}</div></div><ha-icon icon="mdi:sleep"></ha-icon></div>
       ${this.config.show_climate_state ? `<div class="entity-list">${entityIds.map((entityId) => { const climate=this._hass.states[entityId],result=this.entityResult(session,entityId),meta=resultMeta(result?.result),detail=entityResultSummary(result),title=[detail,result?.error].filter(Boolean).join("\n"); return `<div class="entity-state"><div class="entity-main">${esc(climate?.attributes?.friendly_name || entityId)} · ${esc(climate?.state || "unknown")}${climate?.attributes?.temperature != null ? ` · ${esc(climate.attributes.temperature)}°` : ""}${climate?.attributes?.fan_mode ? ` · ${t("风速", "Fan")} ${esc(this.fanModeLabel(climate.attributes.fan_mode))}` : ""}<div class="muted">${esc(entityId)}${detail ? `<br>${esc(detail)}` : ""}</div></div>${result ? `<span class="result ${meta.tone}" title="${esc(title)}"><ha-icon icon="${meta.icon}"></ha-icon>${esc(meta.label)}</span>` : ""}</div>`; }).join("")}</div>` : ""}
       <div class="progress"><i style="width:${progress}%"></i></div>
-      <div class="row between"><span>${session ? t("运行中", "Running") : t("未运行", "Idle")}</span>${this.config.show_next_point && session ? `<span class="muted">${t("下一节点", "Next")}: ${next ? `${nextTime} · ${next.temperature}°C${session.profile_snapshot?.fan_mode_control === "auto" ? ` · ${t("自动风", "Auto fan")}` : session.profile_snapshot?.fan_mode_control === "curve" && next.fan_mode ? ` · ${t("风速", "Fan")} ${esc(this.fanModeLabel(next.fan_mode))}` : ""}` : t("等待结束", "finishing")}</span>` : ""}</div>
+      <div class="row between"><span>${session ? t("运行中", "Running") : t("未运行", "Idle")}</span>${this.config.show_next_point && session ? `<span class="muted">${next ? `${t("下一节点", "Next")}: ${nextTime} · ${next.temperature}°C${session.profile_snapshot?.fan_mode_control === "auto" ? ` · ${t("自动风", "Auto fan")}` : session.profile_snapshot?.fan_mode_control === "curve" && next.fan_mode ? ` · ${t("风速", "Fan")} ${esc(this.fanModeLabel(next.fan_mode))}` : ""}` : session.turn_off_after_minutes ? `${t("定时关机", "Turn off")}: ${new Intl.DateTimeFormat(undefined,{hour:"2-digit",minute:"2-digit"}).format(new Date(session.ends_at))}` : t("等待结束", "finishing")}</span>` : ""}</div>
       <div class="actions">${session ? `<button class="danger" id="stop">${t("停止", "Stop")}</button><button class="secondary" id="restart">${t("重新开始", "Restart")}</button>` : `<button id="start">${t("启动曲线", "Start curve")}</button>`}<button class="secondary" id="profiles">${t("曲线管理", "Profiles")}</button><button class="secondary" id="settings">${t("控制器", "Controller")}</button></div>
       <dialog id="dialog"></dialog>
     </ha-card>`;
@@ -214,7 +238,7 @@ class ClimateSleepCurveCard extends HTMLElement {
       let profile = null;
       try {
         profile = await this._hass.callWS({type:"climate_sleep_curve/profile/save", profile:{name:this.dialog.querySelector("#pname").value,duration_minutes:480,interpolation:"step",fan_mode_control:"none",points:[26.5,26.5,27,27.5,28,28,27.5,27].map((temperature,index)=>({offset_minutes:index*60,temperature}))}, expected_revision:null});
-        const controller = await this._hass.callWS({type:"climate_sleep_curve/controller/save",controller:{name:this.dialog.querySelector("#cname").value,climate_entity_ids:entityIds,profile_id:profile.id,enabled:true,turn_off_after_completion:false,restore_previous_settings_after_end:false,automatic_start:{enabled:false,time:"23:00:00",weekdays:[0,1,2,3,4,5,6]}},expected_revision:null});
+        const controller = await this._hass.callWS({type:"climate_sleep_curve/controller/save",controller:{name:this.dialog.querySelector("#cname").value,climate_entity_ids:entityIds,profile_id:profile.id,enabled:true,turn_off_after_completion:false,turn_off_after_minutes:null,restore_previous_settings_after_end:false,automatic_start:{enabled:false,time:"23:00:00",weekdays:[0,1,2,3,4,5,6]}},expected_revision:null});
         this.config.controller_id = controller.id; this.dialog.close(); await this.refresh();
       } catch (error) {
         if (profile) {
@@ -230,10 +254,16 @@ class ClimateSleepCurveCard extends HTMLElement {
     const profiles = this.state.profiles;
     const auto = controller.automatic_start;
     const supportsCompletionPowerOff = this.supportsCompletionPowerOff();
+    const supportsScheduledPowerOff = this.supportsScheduledPowerOff();
     const supportsPreviousSettingsRestore = this.supportsPreviousSettingsRestore();
     const powerOffDisabled = supportsCompletionPowerOff ? "" : "disabled";
     const restoreDisabled = supportsPreviousSettingsRestore ? "" : "disabled";
-    const powerOffHelp = supportsCompletionPowerOff
+    const powerOffHelp = supportsScheduledPowerOff
+      ? t(
+        "从曲线启动时开始计时，到点后自然结束本次会话并关闭空调。时间必须大于 0 且小于所选曲线时长，界面按 0.5 小时递增。手动停止、重新开始、删除控制器或 Home Assistant 重启恢复都不会关闭空调。",
+        "Counts from the curve start, then naturally completes the session and turns the climate devices off. The time must be greater than zero and shorter than the selected profile, in 0.5-hour steps. Manual stop, restart, controller deletion, and Home Assistant recovery never turn devices off.",
+      )
+      : supportsCompletionPowerOff
       ? t(
         "仅正常运行到曲线结束时生效；手动停止、重新开始、删除控制器或 Home Assistant 重启恢复都不会关闭空调。所选空调必须支持关机服务。",
         "Only applies when the curve reaches its natural end. Manual stop, restart, controller deletion, and Home Assistant recovery never turn devices off. Every selected climate entity must support turn off.",
@@ -252,18 +282,49 @@ class ClimateSleepCurveCard extends HTMLElement {
         "Update the Climate Sleep Curve backend to version 0.6.0 or later first.",
       );
     const weekdayLabels = [t("周一","Mon"),t("周二","Tue"),t("周三","Wed"),t("周四","Thu"),t("周五","Fri"),t("周六","Sat"),t("周日","Sun")];
-    this.dialog.innerHTML = `<div class="editor"><div class="title">${t("控制器设置", "Controller settings")}</div><label>${t("名称", "Name")}</label><input class="field" id="name" value="${esc(controller.name)}"><label>${t("空调实体（可多选）", "Climate entities (multiple allowed)")}</label><ha-selector id="entities"></ha-selector><label>${t("下次会话使用的曲线", "Profile for the next session")}</label><select id="profile">${profiles.map((profile)=>`<option ${profile.id===controller.profile_id?"selected":""} value="${profile.id}">${esc(profile.name)}</option>`).join("")}</select><div class="setting-row"><ha-switch id="automatic"></ha-switch><label for="automatic">${t("每天自动启动", "Start automatically")}</label></div><label>${t("启动时间", "Start time")}</label><ha-selector id="time"></ha-selector><label>${t("生效日期", "Active weekdays")}</label><div class="weekdays">${weekdayLabels.map((label,index)=>`<label class="weekday"><ha-checkbox data-day="${index}"></ha-checkbox><span>${label}</span></label>`).join("")}</div><fieldset class="end-actions"><legend>${t("结束动作（只能选择一项）", "End action (choose one)")}</legend><div class="setting-row"><ha-switch id="turn-off-after-completion" aria-describedby="turn-off-help" ${powerOffDisabled}></ha-switch><label for="turn-off-after-completion">${t("曲线自然结束后关闭空调", "Turn off climate devices after natural completion")}</label></div><p class="muted" id="turn-off-help">${powerOffHelp}</p><div class="setting-row"><ha-switch id="restore-previous-settings" aria-describedby="restore-help" ${restoreDisabled}></ha-switch><label for="restore-previous-settings">${t("结束时恢复启动前的温度和风速", "Restore starting temperature and fan at end")}</label></div><p class="muted" id="restore-help">${restoreHelp}</p></fieldset><div class="actions"><button id="save">${t("保存", "Save")}</button><button class="secondary" id="cancel">${t("取消", "Cancel")}</button><button class="danger" id="delete">${t("删除控制器", "Delete controller")}</button></div></div>`;
+    const timingField = supportsScheduledPowerOff ? `<label for="turn-off-after-hours">${t("启动后几小时关机", "Turn off after")}</label><input class="field" id="turn-off-after-hours" type="number" inputmode="decimal" min="0.5" step="0.5"><p class="muted" id="turn-off-time-help"></p>` : "";
+    this.dialog.innerHTML = `<div class="editor"><div class="title">${t("控制器设置", "Controller settings")}</div><label>${t("名称", "Name")}</label><input class="field" id="name" value="${esc(controller.name)}"><label>${t("空调实体（可多选）", "Climate entities (multiple allowed)")}</label><ha-selector id="entities"></ha-selector><label>${t("下次会话使用的曲线", "Profile for the next session")}</label><select id="profile">${profiles.map((profile)=>`<option ${profile.id===controller.profile_id?"selected":""} value="${profile.id}">${esc(profile.name)}</option>`).join("")}</select><div class="setting-row"><ha-switch id="automatic"></ha-switch><label for="automatic">${t("每天自动启动", "Start automatically")}</label></div><label>${t("启动时间", "Start time")}</label><ha-selector id="time"></ha-selector><label>${t("生效日期", "Active weekdays")}</label><div class="weekdays">${weekdayLabels.map((label,index)=>`<label class="weekday"><ha-checkbox data-day="${index}"></ha-checkbox><span>${label}</span></label>`).join("")}</div><fieldset class="end-actions"><legend>${t("结束动作（只能选择一项）", "End action (choose one)")}</legend><div class="setting-row"><ha-switch id="turn-off-after-completion" aria-describedby="turn-off-help" ${powerOffDisabled}></ha-switch><label for="turn-off-after-completion">${supportsScheduledPowerOff ? t("定时关闭空调", "Turn off climate devices on a timer") : t("曲线自然结束后关闭空调", "Turn off climate devices after natural completion")}</label></div>${timingField}<p class="muted" id="turn-off-help">${powerOffHelp}</p><div class="setting-row"><ha-switch id="restore-previous-settings" aria-describedby="restore-help" ${restoreDisabled}></ha-switch><label for="restore-previous-settings">${t("结束时恢复启动前的温度和风速", "Restore starting temperature and fan at end")}</label></div><p class="muted" id="restore-help">${restoreHelp}</p></fieldset><div class="actions"><button id="save">${t("保存", "Save")}</button><button class="secondary" id="cancel">${t("取消", "Cancel")}</button><button class="danger" id="delete">${t("删除控制器", "Delete controller")}</button></div></div>`;
     this.dialog.showModal();
     const entitySelector = this.setupSelector("#entities", {entity:{filter:{domain:"climate"},multiple:true}}, this.entityIds(controller));
     const timeSelector = this.setupSelector("#time", {time:{no_second:true}}, auto.time);
     this.dialog.querySelector("#automatic").checked = auto.enabled;
     const turnOffSwitch = this.dialog.querySelector("#turn-off-after-completion");
     const restoreSwitch = this.dialog.querySelector("#restore-previous-settings");
+    const profileSelect = this.dialog.querySelector("#profile");
+    const turnOffHours = this.dialog.querySelector("#turn-off-after-hours");
+    let preserveLegacyCompletion = Boolean(controller.turn_off_after_completion)
+      && controller.turn_off_after_minutes == null;
     turnOffSwitch.checked = supportsCompletionPowerOff && Boolean(controller.turn_off_after_completion);
     restoreSwitch.checked = supportsPreviousSettingsRestore
       && Boolean(controller.restore_previous_settings_after_end)
       && !turnOffSwitch.checked;
     this.bindExclusiveSwitches(turnOffSwitch, restoreSwitch);
+    const updateTurnOffTime = (fillDefault = false) => {
+      if (!turnOffHours) return;
+      const bounds = this.powerOffBounds(profileSelect.value);
+      turnOffHours.disabled = !turnOffSwitch.checked;
+      if (!bounds) return;
+      turnOffHours.max = String(bounds.max / 60);
+      if (fillDefault && !turnOffHours.value) turnOffHours.value = String(bounds.suggested / 60);
+      if (turnOffHours.value && Number(turnOffHours.value) * 60 >= bounds.duration) {
+        turnOffHours.value = String(bounds.max / 60);
+      }
+      const help = this.dialog.querySelector("#turn-off-time-help");
+      if (help) help.textContent = t(
+        `可设置 ${this.formatHours(bounds.min)}～${this.formatHours(bounds.max)}；所选曲线共 ${this.formatHours(bounds.duration)}。`,
+        `Choose ${this.formatHours(bounds.min)}–${this.formatHours(bounds.max)}; the selected profile is ${this.formatHours(bounds.duration)}.`,
+      );
+    };
+    if (turnOffHours && controller.turn_off_after_minutes != null) {
+      turnOffHours.value = String(controller.turn_off_after_minutes / 60);
+    }
+    updateTurnOffTime(false);
+    turnOffSwitch.addEventListener("change", () => {
+      if (!turnOffSwitch.checked) preserveLegacyCompletion = false;
+      updateTurnOffTime(turnOffSwitch.checked && !preserveLegacyCompletion);
+    });
+    restoreSwitch.addEventListener("change", () => updateTurnOffTime(false));
+    profileSelect.addEventListener("change", () => updateTurnOffTime(turnOffSwitch.checked && !preserveLegacyCompletion));
     this.dialog.querySelectorAll("ha-checkbox[data-day]").forEach((checkbox) => { checkbox.checked=auto.weekdays.includes(Number(checkbox.dataset.day)); });
     this.dialog.querySelector("#cancel").onclick = () => this.dialog.close();
     this.dialog.querySelector("#save").onclick = async () => {
@@ -274,6 +335,21 @@ class ClimateSleepCurveCard extends HTMLElement {
         if (!time) return showMessage(this, t("请选择有效的启动时间", "Select a valid start time"));
         const weekdays = [...this.dialog.querySelectorAll("ha-checkbox[data-day]")].filter((item)=>item.checked).map((item)=>Number(item.dataset.day));
         if (this.dialog.querySelector("#automatic").checked && !weekdays.length) return showMessage(this, t("请至少勾选一个生效星期", "Select at least one active weekday"));
+        let turnOffAfterMinutes = null;
+        if (supportsScheduledPowerOff && turnOffSwitch.checked && turnOffHours.value) {
+          const hours = Number(turnOffHours.value);
+          const bounds = this.powerOffBounds(profileSelect.value);
+          turnOffAfterMinutes = Math.round(hours * 60);
+          if (
+            !bounds
+            || !Number.isFinite(hours)
+            || turnOffAfterMinutes % 30 !== 0
+            || turnOffAfterMinutes <= 0
+            || turnOffAfterMinutes >= bounds.duration
+          ) return showMessage(this, t("关机时间必须大于 0、小于曲线时长，并按 0.5 小时设置。", "Turn-off time must be greater than zero, shorter than the profile, and use 0.5-hour steps."));
+        } else if (supportsScheduledPowerOff && turnOffSwitch.checked && !preserveLegacyCompletion) {
+          return showMessage(this, t("请设置关机时间。", "Set a turn-off time."));
+        }
         const button = this.dialog.querySelector("#save");
         button.disabled = true;
         await this._hass.callWS({
@@ -283,9 +359,12 @@ class ClimateSleepCurveCard extends HTMLElement {
             name: this.dialog.querySelector("#name").value,
             climate_entity_ids: entityIds,
             climate_entity_id: entityIds[0],
-            profile_id: this.dialog.querySelector("#profile").value,
+            profile_id: profileSelect.value,
             turn_off_after_completion: supportsCompletionPowerOff
               && turnOffSwitch.checked,
+            turn_off_after_minutes: supportsScheduledPowerOff
+              ? turnOffAfterMinutes
+              : controller.turn_off_after_minutes,
             restore_previous_settings_after_end: supportsPreviousSettingsRestore
               && restoreSwitch.checked,
             automatic_start: {
